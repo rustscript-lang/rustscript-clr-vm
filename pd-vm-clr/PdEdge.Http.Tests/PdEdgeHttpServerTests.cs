@@ -61,19 +61,15 @@ public sealed class PdEdgeHttpServerTests
             use proxy;
 
             let downstream_version = http::request::get_http_version();
-            let upstream = http::exchange::prepare_default_upstream(
-                "127.0.0.1",
-                {{upstream.Port}},
-                "1.1",
-                ["x-downstream-version", downstream_version, "x-bench-program-header", "program-proxy"]
-            );
-            let downstream = proxy::stream::downstream();
-            let upstream_stream = proxy::stream::exchange(upstream);
+            let upstream: int = http::exchange::default_upstream();
+            http::exchange::set_target(upstream, "127.0.0.1", {{upstream.Port}});
+            http::exchange::set_header(upstream, "x-downstream-version", downstream_version);
+            http::exchange::set_header(upstream, "x-bench-program-header", "program-proxy");
+            let downstream: int = proxy::stream::downstream();
+            let upstream_stream: int = proxy::stream::exchange(upstream);
             proxy::forward_native(downstream, upstream_stream);
-            http::response::set_headers([
-                "x-downstream-version", downstream_version,
-                "x-bench-response-header", "program-proxy"
-            ]);
+            http::response::set_header("x-downstream-version", downstream_version);
+            http::response::set_header("x-bench-response-header", "program-proxy");
             """;
         var program = await LoadInlineProgramAsync(source);
         await using var server = await StartServerAsync(program);

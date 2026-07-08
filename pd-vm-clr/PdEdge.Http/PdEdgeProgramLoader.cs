@@ -186,11 +186,17 @@ public static class PdEdgeProgramLoader
                     return directory.FullName;
                 }
 
+                var siblingEdgeRoot = Path.Combine(directory.FullName, "pd-edge");
+                if (IsWorkspaceRoot(siblingEdgeRoot))
+                {
+                    return siblingEdgeRoot;
+                }
+
                 directory = directory.Parent;
             }
         }
 
-        throw new InvalidOperationException("failed to locate the project-d workspace root");
+        throw new InvalidOperationException("failed to locate the pd-edge workspace root");
     }
 
     private static IEnumerable<string> EnumerateSearchSeeds()

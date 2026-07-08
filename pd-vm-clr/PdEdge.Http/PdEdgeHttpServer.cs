@@ -294,6 +294,41 @@ public sealed class PdEdgeHttpServer : IAsyncDisposable
             requestContext.PrepareDefaultUpstream(hostName, port, ParseHeaderBatch(args[3]));
             return PdVmValue.FromInt(PdEdgeHostFunctions.DefaultUpstreamExchangeHandle);
         });
+        host.RegisterReturn(PdEdgeHostFunctions.ExchangeSetTarget, args =>
+        {
+            ExpectArgCount(PdEdgeHostFunctions.ExchangeSetTarget, args, 3);
+            var exchange = ExpectInt(args[0], "exchange handle");
+            if (exchange != PdEdgeHostFunctions.DefaultUpstreamExchangeHandle)
+            {
+                throw new InvalidOperationException(
+                    $"PdEdge.Http supports only the default upstream exchange, got {exchange}");
+            }
+
+            var hostName = ExpectString(args[1], "upstream host");
+            var port = checked((int)ExpectInt(args[2], "upstream port"));
+            if (port is <= 0 or > 65535)
+            {
+                throw new InvalidOperationException("invalid upstream port");
+            }
+
+            requestContext.SetDefaultUpstreamTarget(hostName, port);
+            return PdVmCallReturn.None;
+        });
+        host.RegisterReturn(PdEdgeHostFunctions.ExchangeSetHeader, args =>
+        {
+            ExpectArgCount(PdEdgeHostFunctions.ExchangeSetHeader, args, 3);
+            var exchange = ExpectInt(args[0], "exchange handle");
+            if (exchange != PdEdgeHostFunctions.DefaultUpstreamExchangeHandle)
+            {
+                throw new InvalidOperationException(
+                    $"PdEdge.Http supports only the default upstream exchange, got {exchange}");
+            }
+
+            requestContext.SetDefaultUpstreamHeader(
+                ExpectString(args[1], "header name"),
+                ExpectString(args[2], "header value"));
+            return PdVmCallReturn.None;
+        });
         host.RegisterValue(PdEdgeHostFunctions.ProxyStreamDownstream, args =>
         {
             ExpectArgCount(PdEdgeHostFunctions.ProxyStreamDownstream, args, 0);

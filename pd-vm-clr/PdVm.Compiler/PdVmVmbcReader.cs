@@ -264,12 +264,21 @@ public static class PdVmVmbcReader
                 return null;
             case 1:
             {
+                _ = ReadBool(ref cursor); // strict types flag; CLR only needs the flattened value hints.
                 var localCount = checked((int)cursor.ReadUInt32());
                 var localTypes = new PdVmValueType[localCount];
                 for (var index = 0; index < localCount; index++)
                 {
                     localTypes[index] = ReadValueType(cursor.ReadByte());
                 }
+
+                for (var index = 0; index < localCount; index++)
+                {
+                    SkipOptionalSchema(ref cursor);
+                }
+
+                SkipBoolVec(ref cursor, localCount);
+                SkipBoolVec(ref cursor, localCount);
 
                 var operandCount = checked((int)cursor.ReadUInt32());
                 var operandTypes = new Dictionary<int, PdVmOperandTypes>(operandCount);
@@ -285,6 +294,105 @@ public static class PdVmVmbcReader
             }
             default:
                 throw new PdVmCompilerException("invalid type map flag in VMBC payload");
+        }
+    }
+
+    private static bool ReadBool(ref Cursor cursor)
+    {
+        return cursor.ReadByte() switch
+        {
+            0 => false,
+            1 => true,
+            var value => throw new PdVmCompilerException($"invalid bool flag {value} in VMBC payload"),
+        };
+    }
+
+    private static void SkipBoolVec(ref Cursor cursor, int expectedLength)
+    {
+        var count = checked((int)cursor.ReadUInt32());
+        if (count != expectedLength)
+        {
+            throw new PdVmCompilerException(
+                $"invalid type map bool vector length {count}, expected {expectedLength}");
+        }
+
+        for (var index = 0; index < count; index++)
+        {
+            _ = ReadBool(ref cursor);
+        }
+    }
+
+    private static void SkipOptionalSchema(ref Cursor cursor)
+    {
+        switch (cursor.ReadByte())
+        {
+            case 0:
+                return;
+            case 1:
+                SkipSchema(ref cursor);
+                return;
+            default:
+                throw new PdVmCompilerException("invalid optional schema flag in VMBC payload");
+        }
+    }
+
+    private static void SkipSchema(ref Cursor cursor)
+    {
+        switch (cursor.ReadByte())
+        {
+            case 0:
+            case 1:
+            case 2:
+            case 3:
+            case 4:
+            case 5:
+            case 6:
+            case 7:
+                return;
+            case 8:
+                _ = cursor.ReadString();
+                return;
+            case 9:
+                _ = cursor.ReadString();
+                SkipSchemaList(ref cursor);
+                return;
+            case 10:
+            case 13:
+            case 16:
+                SkipSchema(ref cursor);
+                return;
+            case 11:
+                SkipSchemaList(ref cursor);
+                return;
+            case 12:
+                SkipSchemaList(ref cursor);
+                SkipSchema(ref cursor);
+                return;
+            case 14:
+            {
+                var count = checked((int)cursor.ReadUInt32());
+                for (var index = 0; index < count; index++)
+                {
+                    _ = cursor.ReadString();
+                    SkipSchema(ref cursor);
+                }
+                return;
+            }
+            case 15:
+                SkipSchemaList(ref cursor);
+                SkipSchema(ref cursor);
+                return;
+            default:
+                throw new PdVmCompilerException("invalid schema tag in VMBC payload");
+        }
+    }
+
+    private static void SkipSchemaList(ref Cursor cursor)
+    {
+        var count = checked((int)cursor.ReadUInt32());
+        for (var index = 0; index < count; index++)
+        {
+            SkipSchema(ref cursor);
         }
     }
 

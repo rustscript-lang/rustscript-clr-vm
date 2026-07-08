@@ -130,6 +130,32 @@ public sealed class PdEdgeRequestContext
         }
     }
 
+    public void SetDefaultUpstreamTarget(string host, int port)
+    {
+        lock (_gate)
+        {
+            var headers = _preparedUpstream?.Headers is null
+                ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                : new Dictionary<string, string>(_preparedUpstream.Headers, StringComparer.OrdinalIgnoreCase);
+            _preparedUpstream = new PreparedUpstreamState(host, port, headers);
+        }
+    }
+
+    public void SetDefaultUpstreamHeader(string name, string value)
+    {
+        lock (_gate)
+        {
+            var headers = _preparedUpstream?.Headers is null
+                ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                : new Dictionary<string, string>(_preparedUpstream.Headers, StringComparer.OrdinalIgnoreCase);
+            headers[name] = value;
+            _preparedUpstream = new PreparedUpstreamState(
+                _preparedUpstream?.Host ?? string.Empty,
+                _preparedUpstream?.Port ?? 0,
+                headers);
+        }
+    }
+
     public PreparedUpstreamState? GetPreparedUpstream()
     {
         lock (_gate)

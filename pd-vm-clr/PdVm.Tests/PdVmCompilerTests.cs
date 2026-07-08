@@ -447,10 +447,28 @@ public sealed class PdVmCompilerTests
         }
 
         writer.Write((byte)1);
+        writer.Write((byte)0);
         writer.Write((uint)typeMap.LocalTypes.Count);
         foreach (var localType in typeMap.LocalTypes)
         {
             writer.Write((byte)localType);
+        }
+
+        foreach (var _ in typeMap.LocalTypes)
+        {
+            writer.Write((byte)0);
+        }
+
+        writer.Write((uint)typeMap.LocalTypes.Count);
+        foreach (var _ in typeMap.LocalTypes)
+        {
+            writer.Write((byte)0);
+        }
+
+        writer.Write((uint)typeMap.LocalTypes.Count);
+        foreach (var _ in typeMap.LocalTypes)
+        {
+            writer.Write((byte)0);
         }
 
         writer.Write((uint)typeMap.OperandTypes.Count);

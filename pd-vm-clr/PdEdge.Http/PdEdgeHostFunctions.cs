@@ -29,6 +29,8 @@ public static class PdEdgeHostFunctions
     public const string ResponseSetBody = "http::response::set_body";
     public const string ExchangeDefaultUpstream = "http::exchange::default_upstream";
     public const string ExchangePrepareDefaultUpstream = "http::exchange::prepare_default_upstream";
+    public const string ExchangeSetHeader = "http::exchange::set_header";
+    public const string ExchangeSetTarget = "http::exchange::set_target";
     public const string ProxyStreamDownstream = "proxy::stream::downstream";
     public const string ProxyStreamExchange = "proxy::stream::exchange";
     public const string ProxyForwardNative = "proxy::forward_native";
@@ -57,6 +59,8 @@ public static class PdEdgeHostFunctions
             [ResponseSetBody] = new(ResponseSetBody, 1, PdVmValueType.Null),
             [ExchangeDefaultUpstream] = new(ExchangeDefaultUpstream, 0, PdVmValueType.Int),
             [ExchangePrepareDefaultUpstream] = new(ExchangePrepareDefaultUpstream, 4, PdVmValueType.Int),
+            [ExchangeSetHeader] = new(ExchangeSetHeader, 3, PdVmValueType.Null),
+            [ExchangeSetTarget] = new(ExchangeSetTarget, 3, PdVmValueType.Null),
             [ProxyStreamDownstream] = new(ProxyStreamDownstream, 0, PdVmValueType.Int),
             [ProxyStreamExchange] = new(ProxyStreamExchange, 1, PdVmValueType.Int),
             [ProxyForwardNative] = new(ProxyForwardNative, 2, PdVmValueType.String),
