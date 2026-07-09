@@ -1,19 +1,13 @@
 # RustScript CLR VM
 
-This repository carries the CLR runtime/compiler support split from the original `project-d` history.
+CLR runtime and compiler support for PD VM bytecode. The repository includes the CLR VM runtime, bytecode-to-CLR compiler, runner CLI, tests, examples, and a minimal Edge HTTP runtime.
 
-## Repository split
+## Related projects
 
 - RustScript core VM and standard library: https://github.com/rustscript-lang/rustscript
 - CLR VM: https://github.com/rustscript-lang/rustscript-clr-vm
 - Edge runtime and ABI: https://github.com/rustscript-lang/pd-edge
 - Controller: https://github.com/rustscript-lang/pd-controller
-
-## Local crates
-
-The CLR implementation now lives at the repository root and includes runtime, compiler, runner, tests, examples, and a minimal edge HTTP runtime.
-
-CLR runtime and compiler support for PD VM bytecode.
 
 ## Projects
 
