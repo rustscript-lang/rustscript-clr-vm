@@ -13,13 +13,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: rustscript-clr-vm
+      - uses: actions/checkout@v4
+        with:
+          repository: rustscript-lang/rustscript
+          path: rustscript
+      - uses: actions/checkout@v4
+        with:
+          repository: rustscript-lang/pd-edge
+          path: pd-edge
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '9.0.x'
       - name: Restore
+        working-directory: rustscript-clr-vm
         run: dotnet restore pd-vm-clr.sln
       - name: Build
+        working-directory: rustscript-clr-vm
         run: dotnet build pd-vm-clr.sln --no-restore --configuration Release
       - name: Tests
+        working-directory: rustscript-clr-vm
         run: dotnet test pd-vm-clr.sln --no-build --configuration Release --verbosity normal
