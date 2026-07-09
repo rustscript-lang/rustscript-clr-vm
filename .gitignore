@@ -12,3 +12,10 @@
 node_modules
 dist
 dist.zip
+bin/
+obj/
+TestResults/
+.vs/
+*.user
+*.rsuser
+*.suo
