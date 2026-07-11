@@ -32,6 +32,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/checkout@v4
+        with:
+          repository: rustscript-lang/rustscript
+          path: rustscript
+
+      - uses: actions/checkout@v4
+        with:
+          repository: rustscript-lang/pd-edge
+          path: pd-edge
+
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
