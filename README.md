@@ -64,13 +64,15 @@ dotnet test PdEdge.Http.Tests\PdEdge.Http.Tests.csproj --no-build
 
 ## Compile Source To VMBC
 
-For a plain PD VM source file, emit `VMBC` with `pd-vm-run`:
+`PdVm.Runner` calls the bundled native compiler library in-process. A separate `pd-vm-run` executable is not required:
 
 ```powershell
-cargo run -p pd-vm --bin pd-vm-run -- `
-  --emit-vmbc path\to\program.vmbc `
-  path\to\program.rss
+PdVm.Runner.exe emit-vmbc `
+  path\to\program.rss `
+  path\to\program.vmbc
 ```
+
+Managed callers can use `PdVmNativeCompiler.CompileFile` or `CompileFileToVmbc` from `PdVm.Compiler.dll`. The native ABI returns VMBC bytes or a UTF-8 diagnostic and releases result buffers through the matching Rust export.
 
 For a PD Edge HTTP proxy script, use the Edge helper so imports are checked against the Edge ABI:
 
@@ -115,7 +117,19 @@ dotnet run --project PdVm.Runner -- compile-source `
 dotnet run --project PdVm.Runner -- run artifacts\dotnet-typed-winforms.dll
 ```
 
-`--rustscript-compiler <path>` selects `pd-vm-run`; `--source-root <path>` sets the module-tree root. Typed imports carry exact CLR assembly, module, type, member, parameter, and return identities. Name-based dynamic reflection remains behind `--enable-dynamic-dotnet`.
+`--pd-vm-library <path>` selects an explicit native compiler library; `--source-root <path>` sets the module-tree root. By default the native library is loaded beside the Runner. Typed imports carry exact CLR assembly, module, type, member, parameter, and return identities. Name-based dynamic reflection remains behind `--enable-dynamic-dotnet`.
+
+## Release packages
+
+The Release workflow builds `win-x64`, `osx-arm64`, and `linux-x64` packages. Each archive contains the framework-dependent `PdVm.Runner` executable, managed DLLs and portable PDBs, runtime configuration, and the platform native compiler library. The Windows archive also contains the native PDB.
+
+Build a package locally with:
+
+```powershell
+.\scripts\package-release.ps1 `
+  -RuntimeIdentifier win-x64 `
+  -RustTarget x86_64-pc-windows-msvc
+```
 
 Compile a `VMBC` file to a CLR assembly:
 

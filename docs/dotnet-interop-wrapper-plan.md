@@ -2,7 +2,7 @@
 
 ## Implementation status
 
-The typed wrapper pipeline is implemented in this repository. `PdVm.Runner compile-source` builds a temporary source overlay, generates concrete RustScript declarations for the selected profile, invokes the unmodified upstream compiler, remaps generated imports to versioned exact CLR descriptors, and lowers the result to CLR IL. The default runtime accepts these descriptors while name-based reflection requires the explicit experimental flag.
+The typed wrapper pipeline is implemented in this repository. `PdVm.Runner compile-source` builds a temporary source overlay, generates concrete RustScript declarations for the selected profile, invokes the unmodified upstream compiler through the bundled native C ABI, remaps generated imports to versioned exact CLR descriptors, and lowers the result to CLR IL. The default runtime accepts these descriptors while name-based reflection requires the explicit experimental flag.
 
 The implemented common profile covers Console, Math, Path, File, and StringBuilder. The Windows-only `winforms` profile covers Form, Label, Button, ControlCollection, primitive properties, dialog display, and disposal. Metadata-driven user manifests and event/delegate adapters remain later extensions.
 
@@ -127,9 +127,7 @@ Conversions that lose range or precision are rejected unless the binding profile
 
 The wrapper accepts a source root, copies or mirrors the RustScript module tree into a temporary overlay, and writes generated modules under `system/...`. The user's source tree is never modified.
 
-The upstream compiler runs against the overlay through its existing CLI or a small adapter executable in this repository that calls its public `compile_source_file_with_options` API. The adapter pins an upstream compiler version but contains no compiler fork.
-
-Using the public API with module overrides is preferred because it avoids copying large source trees. The CLI fallback uses an overlay and remains useful for compatibility testing.
+The bundled `pd-vm-compiler` cdylib runs against the overlay and calls the upstream compiler API in-process. It pins an upstream compiler commit, disables the upstream runtime/CLI/JIT features, and exports a small C ABI for compilation and buffer release. The C# wrapper invokes that ABI with P/Invoke; no compiler process is launched.
 
 ### 6. VMBC remap
 

@@ -6,6 +6,18 @@ namespace PdVm.Tests;
 public sealed class PdVmTypedDotNetInteropTests
 {
     [Fact]
+    public void NativeCompilerEmitsReadableVmbcWithoutRunnerProcess()
+    {
+        using var fixture = new SourceFixture("let answer: int = 40 + 2;\n");
+
+        var bytes = PdVmNativeCompiler.CompileFile(fixture.SourcePath);
+        var model = PdVmVmbcReader.ReadBytes(bytes);
+
+        Assert.NotEmpty(model.Code);
+        Assert.True(bytes.AsSpan(0, 4).SequenceEqual("VMBC"u8));
+    }
+
+    [Fact]
     public void ExactDescriptorRoundTripsAndInvokesSelectedOverload()
     {
         var method = typeof(Math).GetMethod(nameof(Math.Abs), [typeof(long)])!;

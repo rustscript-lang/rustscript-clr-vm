@@ -1,4 +1,6 @@
 /target
+native/**/target/
+artifacts/
 /vm-compare-bench/
 .pd-controller
 .pd-edge

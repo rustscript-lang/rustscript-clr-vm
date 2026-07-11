@@ -25,6 +25,8 @@ internal static class ProgramEntry
                     return RunCompile(args);
                 case "compile-source":
                     return RunCompileSource(args);
+                case "emit-vmbc":
+                    return RunEmitVmbc(args);
                 case "run":
                     return await RunAssemblyAsync(args);
                 case "compile-run":
@@ -72,10 +74,24 @@ internal static class ProgramEntry
             new PdVmDotNetSourceCompileOptions
             {
                 Profile = profile,
-                RustScriptCompilerPath = GetOption(args, "--rustscript-compiler"),
+                NativeCompilerLibraryPath = GetOption(args, "--pd-vm-library"),
                 SourceRoot = GetOption(args, "--source-root"),
             });
         Console.WriteLine(output);
+        return 0;
+    }
+
+    private static int RunEmitVmbc(IReadOnlyList<string> args)
+    {
+        if (args.Count < 3)
+        {
+            throw new ArgumentException("emit-vmbc requires <input.rss> <output.vmbc>");
+        }
+        PdVmNativeCompiler.CompileFileToVmbc(
+            args[1],
+            args[2],
+            GetOption(args, "--pd-vm-library"));
+        Console.WriteLine(Path.GetFullPath(args[2]));
         return 0;
     }
 
@@ -170,7 +186,8 @@ internal static class ProgramEntry
         Console.Error.WriteLine("Usage:");
         Console.Error.WriteLine("  PdVm.Runner compile <input.vmbc> <output.dll>");
         Console.Error.WriteLine("  PdVm.Runner compile-source <input.rss> <output.dll> [--profile common|winforms]");
-        Console.Error.WriteLine("    [--rustscript-compiler <path>] [--source-root <path>]");
+        Console.Error.WriteLine("    [--pd-vm-library <path>] [--source-root <path>]");
+        Console.Error.WriteLine("  PdVm.Runner emit-vmbc <input.rss> <output.vmbc> [--pd-vm-library <path>]");
         Console.Error.WriteLine("  PdVm.Runner run <program.dll> [--max-steps <count>] [--enable-dynamic-dotnet]");
         Console.Error.WriteLine("    --max-steps is enforced inside generated CLR code");
         Console.Error.WriteLine("    --enable-dynamic-dotnet enables the experimental reflection host");

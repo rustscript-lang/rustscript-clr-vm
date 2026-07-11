@@ -1,0 +1,12 @@
+[package]
+name = "pd-vm-compiler"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+vm = { package = "pd-vm", git = "https://github.com/rustscript-lang/rustscript", rev = "1f3aaeec911781d3b5ed298754dc2597da38c7b2", default-features = false }

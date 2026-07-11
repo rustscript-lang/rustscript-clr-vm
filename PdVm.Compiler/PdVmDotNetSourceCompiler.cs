@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
@@ -15,7 +14,7 @@ public enum PdVmDotNetInteropProfile
 
 public sealed class PdVmDotNetSourceCompileOptions
 {
-    public string? RustScriptCompilerPath { get; init; }
+    public string? NativeCompilerLibraryPath { get; init; }
 
     public string? SourceRoot { get; init; }
 
@@ -68,13 +67,10 @@ public static class PdVmDotNetSourceCompiler
             var importMap = WriteBindingModules(temporaryRoot, bindings);
             var relativeSource = Path.GetRelativePath(sourceRoot, fullSourcePath);
             var overlaySource = Path.Combine(temporaryRoot, relativeSource);
-            var vmbcPath = Path.Combine(temporaryRoot, "program.vmbc");
-            RunRustScriptCompiler(
-                FindRustScriptCompiler(options.RustScriptCompilerPath),
+            var vmbc = PdVmNativeCompiler.CompileFile(
                 overlaySource,
-                vmbcPath);
-
-            var model = RemapImports(PdVmVmbcReader.ReadFile(vmbcPath), importMap);
+                options.NativeCompilerLibraryPath);
+            var model = RemapImports(PdVmVmbcReader.ReadBytes(vmbc), importMap);
             return PdVmClrCompiler.Compile(model, outputPath, clrOptions);
         }
         finally
@@ -350,70 +346,6 @@ public static class PdVmDotNetSourceCompiler
             Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
             File.Copy(source, destination, overwrite: false);
         }
-    }
-
-    private static void RunRustScriptCompiler(string compilerPath, string sourcePath, string vmbcPath)
-    {
-        using var process = new Process
-        {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName = compilerPath,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            },
-        };
-        process.StartInfo.ArgumentList.Add("--emit-vmbc");
-        process.StartInfo.ArgumentList.Add(vmbcPath);
-        process.StartInfo.ArgumentList.Add(sourcePath);
-        if (!process.Start())
-        {
-            throw new InvalidOperationException("failed to start the RustScript compiler");
-        }
-        var stdout = process.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        if (process.ExitCode != 0)
-        {
-            throw new PdVmCompilerException(
-                $"RustScript compilation failed with exit code {process.ExitCode}:{Environment.NewLine}{stdout}{stderr}".Trim());
-        }
-    }
-
-    private static string FindRustScriptCompiler(string? configuredPath)
-    {
-        if (!string.IsNullOrWhiteSpace(configuredPath))
-        {
-            return Path.GetFullPath(configuredPath);
-        }
-        var environmentPath = Environment.GetEnvironmentVariable("RUSTSCRIPT_COMPILER");
-        if (!string.IsNullOrWhiteSpace(environmentPath))
-        {
-            return Path.GetFullPath(environmentPath);
-        }
-
-        var fileName = OperatingSystem.IsWindows() ? "pd-vm-run.exe" : "pd-vm-run";
-        foreach (var seed in new[] { Environment.CurrentDirectory, AppContext.BaseDirectory })
-        {
-            var directory = new DirectoryInfo(seed);
-            while (directory is not null)
-            {
-                var candidate = Path.Combine(directory.FullName, "rustscript", "target", "debug", fileName);
-                if (File.Exists(candidate))
-                {
-                    return candidate;
-                }
-                var sibling = Path.Combine(directory.FullName, "..", "rustscript", "target", "debug", fileName);
-                if (File.Exists(sibling))
-                {
-                    return Path.GetFullPath(sibling);
-                }
-                directory = directory.Parent;
-            }
-        }
-        return fileName;
     }
 
     private static bool IsPathWithin(string path, string root)
