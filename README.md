@@ -102,6 +102,8 @@ Compile a `VMBC` file to a CLR assembly:
 dotnet run --project PdVm.Runner -- compile input.vmbc output.dll
 ```
 
+Compilation writes `PdVm.Runtime.dll` beside the generated program assembly. The generated assembly references the runtime ABI but has no dependency on `PdVm.Compiler` or the original VMBC payload.
+
 Run a compiled CLR assembly:
 
 ```powershell
@@ -120,7 +122,7 @@ Optional execution cap:
 dotnet run --project PdVm.Runner -- run output.dll --max-steps 1000000
 ```
 
-`--max-steps` is still supported. It caps executed VM instructions, but enforcement happens when control returns to the runtime: halt, host-call boundaries, async waits, or backward-branch safepoints.
+`--max-steps` is enforced by budget checks in the generated CLR method. Backward branches remain native CLR branches and do not return to the C# execution driver.
 
 ## Run The Minimal HTTP Proxy
 
@@ -147,7 +149,7 @@ Useful flags:
 - `--vm-execution-mode async|threading`
   - Request-time VM execution strategy.
 - `--max-steps <N>`
-  - Per-request VM instruction cap. Default is `10000000`.
+  - Per-request instruction cap. Default is `10000000`.
 - `--disable-logging`
   - Suppresses console log output.
 
@@ -213,6 +215,8 @@ cargo run -p pd-edge --example http_proxy_perf_framework -- `
 
 ## Current Status
 
-- `PdVm` CLR compile/run flow is working.
+- VMBC is decoded only during compilation. Generated assemblies contain CLR control flow, CLR evaluation locals, generated local fields, and direct intrinsic calls; they do not contain a VMBC instruction stream.
+- Typed arithmetic and comparison hints lower to native CLR opcodes. Dynamic values use focused operations from `PdVm.Runtime` rather than an instruction interpreter.
+- The operand stack is materialized into runtime state only at halt, host-call, async-resume, and instruction-budget boundaries.
 - `PdEdge.Http` local-response and native-forward proxy paths are covered by tests.
 - The Rust HTTP perf harness can drive the CLR proxy binary directly.

@@ -26,7 +26,9 @@ public abstract class PdVmProgramBase : IPdVmProgram
 
     public long ExecutedInstructionCount => _executedInstructionCount;
 
-    public abstract PdVmStatus RunStep(IPdVmHost host);
+    public PdVmStatus RunStep(IPdVmHost host) => RunStep(host, int.MaxValue);
+
+    public abstract PdVmStatus RunStep(IPdVmHost host, int instructionBudget);
 
     public void ResumePending(ulong opId, PdVmCallReturn returnValues)
     {
@@ -66,6 +68,9 @@ public abstract class PdVmProgramBase : IPdVmProgram
         _executedInstructionCount += count;
     }
 
+    protected static void ThrowInstructionBudgetExceeded(int instructionBudget) =>
+        throw new InvalidOperationException($"execution exceeded {instructionBudget} steps");
+
     protected PdVmStatus GetLastStatus() => _lastStatus;
 
     protected PdVmStatus HaltProgram()
@@ -74,13 +79,9 @@ public abstract class PdVmProgramBase : IPdVmProgram
         return _lastStatus;
     }
 
-    protected PdVmStatus YieldProgram()
-    {
-        _lastStatus = PdVmStatus.Yielded();
-        return _lastStatus;
-    }
-
     protected void PushValue(PdVmValue value) => _stack.Add(value);
+
+    protected void ResetStack() => _stack.Clear();
 
     protected PdVmValue PopValue()
     {
@@ -95,61 +96,15 @@ public abstract class PdVmProgramBase : IPdVmProgram
         return value;
     }
 
-    protected bool PopBool() => PopValue().AsBool();
-
-    protected void DiscardTop() => _ = PopValue();
-
-    protected void DuplicateTop() => _stack.Add(PeekValue());
-
-    protected void LoadLocalValue(byte index)
+    protected void SetLocalValue(byte index, PdVmValue value)
     {
         if (index >= _locals.Length)
         {
             throw new InvalidOperationException($"invalid local {index}");
         }
 
-        _stack.Add(_locals[index]);
+        _locals[index] = value;
     }
-
-    protected void StoreLocalValue(byte index)
-    {
-        if (index >= _locals.Length)
-        {
-            throw new InvalidOperationException($"invalid local {index}");
-        }
-
-        _locals[index] = PopValue();
-    }
-
-    protected void ApplyAdd() => ApplyBinary(PdVmOps.Add);
-
-    protected void ApplySub() => ApplyBinary(PdVmOps.Sub);
-
-    protected void ApplyMul() => ApplyBinary(PdVmOps.Mul);
-
-    protected void ApplyDiv() => ApplyBinary(PdVmOps.Div);
-
-    protected void ApplyMod() => ApplyBinary(PdVmOps.Mod);
-
-    protected void ApplyNeg() => _stack.Add(PdVmOps.Neg(PopValue()));
-
-    protected void ApplyNot() => _stack.Add(PdVmOps.Not(PopValue()));
-
-    protected void ApplyEqual() => ApplyBinary(PdVmOps.Ceq);
-
-    protected void ApplyLessThan() => ApplyBinary(PdVmOps.Clt);
-
-    protected void ApplyGreaterThan() => ApplyBinary(PdVmOps.Cgt);
-
-    protected void ApplyShl() => ApplyBinary(PdVmOps.Shl);
-
-    protected void ApplyShr() => ApplyBinary(PdVmOps.Shr);
-
-    protected void ApplyLshr() => ApplyBinary(PdVmOps.Lshr);
-
-    protected void ApplyAnd() => ApplyBinary(PdVmOps.And);
-
-    protected void ApplyOr() => ApplyBinary(PdVmOps.Or);
 
     protected bool DispatchCall(
         IPdVmHost host,
@@ -205,6 +160,10 @@ public abstract class PdVmProgramBase : IPdVmProgram
                 _lastStatus = PdVmStatus.Halted();
                 return true;
             case PdVmCallOutcomeKind.Yield:
+                foreach (var arg in args)
+                {
+                    _stack.Add(arg);
+                }
                 InstructionPointer = callIp;
                 _lastStatus = PdVmStatus.Yielded();
                 return true;
@@ -216,23 +175,6 @@ public abstract class PdVmProgramBase : IPdVmProgram
             default:
                 throw new InvalidOperationException($"unexpected call outcome {outcome.Kind}");
         }
-    }
-
-    private PdVmValue PeekValue()
-    {
-        if (_stack.Count == 0)
-        {
-            throw new InvalidOperationException("stack underflow");
-        }
-
-        return _stack[_stack.Count - 1];
-    }
-
-    private void ApplyBinary(Func<PdVmValue, PdVmValue, PdVmValue> operation)
-    {
-        var rhs = PopValue();
-        var lhs = PopValue();
-        _stack.Add(operation(lhs, rhs));
     }
 
     private PdVmValue[] PopArgs(int argc)

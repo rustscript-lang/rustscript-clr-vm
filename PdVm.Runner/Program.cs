@@ -115,8 +115,8 @@ internal static class ProgramEntry
         Console.Error.WriteLine("Usage:");
         Console.Error.WriteLine("  PdVm.Runner compile <input.vmbc> <output.dll>");
         Console.Error.WriteLine("  PdVm.Runner run <program.dll> [--max-steps <count>]");
-        Console.Error.WriteLine("    --max-steps caps executed VM instructions at runtime safepoints");
+        Console.Error.WriteLine("    --max-steps is enforced inside generated CLR code");
         Console.Error.WriteLine("  PdVm.Runner compile-run <input.vmbc> [output.dll] [--max-steps <count>]");
-        Console.Error.WriteLine("    --max-steps caps executed VM instructions at runtime safepoints");
+        Console.Error.WriteLine("    --max-steps is enforced inside generated CLR code");
     }
 }

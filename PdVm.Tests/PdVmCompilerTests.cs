@@ -88,12 +88,18 @@ public sealed class PdVmCompilerTests
             typeMap: typeMap);
 
         var result = PdVmExecution.Run(artifact.Program, new PdVmDelegateHost());
-        var calledMethods = ReadCalledMethods(artifact.Program.GetType().GetMethod(nameof(IPdVmProgram.RunStep))!);
+        var calledMethods = ReadCalledMethods(GetCompiledRunStep(artifact.Program));
+        var opCodes = ReadOpCodes(GetCompiledRunStep(artifact.Program));
 
         Assert.Equal(PdVmStatusKind.Halted, result.Status.Kind);
         Assert.Equal(42, Assert.Single(artifact.Program.Stack).AsInt());
-        Assert.DoesNotContain(calledMethods, method => method == GetBaseMethod("ApplyAdd"));
+        Assert.DoesNotContain(
+            calledMethods,
+            method => method == typeof(PdVmOps).GetMethod(
+                nameof(PdVmOps.Add),
+                new[] { typeof(PdVmValue), typeof(PdVmValue) }));
         Assert.Contains(calledMethods, method => method == typeof(PdVmValue).GetMethod(nameof(PdVmValue.AsInt), Type.EmptyTypes));
+        Assert.Contains(OpCodes.Add, opCodes);
     }
 
     [Fact]
@@ -115,11 +121,38 @@ public sealed class PdVmCompilerTests
             code: code);
 
         var result = PdVmExecution.Run(artifact.Program, new PdVmDelegateHost());
-        var calledMethods = ReadCalledMethods(artifact.Program.GetType().GetMethod(nameof(IPdVmProgram.RunStep))!);
+        var calledMethods = ReadCalledMethods(GetCompiledRunStep(artifact.Program));
 
         Assert.Equal(PdVmStatusKind.Halted, result.Status.Kind);
         Assert.Equal(42, Assert.Single(artifact.Program.Stack).AsInt());
-        Assert.Contains(calledMethods, method => method == GetBaseMethod("ApplyAdd"));
+        Assert.Contains(
+            calledMethods,
+            method => method == typeof(PdVmOps).GetMethod(
+                nameof(PdVmOps.Add),
+                new[] { typeof(PdVmValue), typeof(PdVmValue) }));
+    }
+
+    [Fact]
+    public void EmitsSelfContainedClrArtifactPair()
+    {
+        var artifact = CompileProgramArtifact(
+            constants: [PdVmValue.FromInt(42)],
+            code: new BytecodeBuilder()
+                .EmitLdc(0)
+                .Emit(PdVmBytecodeOpCode.Ret)
+                .Build());
+
+        var references = artifact.Program.GetType().Assembly.GetReferencedAssemblies();
+        var runtimePath = Path.Combine(
+            Path.GetDirectoryName(artifact.AssemblyPath)!,
+            "PdVm.Runtime.dll");
+
+        Assert.Contains(references, reference => reference.Name == "PdVm.Runtime");
+        Assert.DoesNotContain(references, reference => reference.Name == "PdVm.Compiler");
+        Assert.DoesNotContain(
+            artifact.Program.GetType().GetFields(BindingFlags.Instance | BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public),
+            field => field.FieldType == typeof(byte[]));
+        Assert.True(File.Exists(runtimePath));
     }
 
     [Fact]
@@ -143,7 +176,7 @@ public sealed class PdVmCompilerTests
             code: code);
 
         var result = PdVmExecution.Run(artifact.Program, new PdVmDelegateHost());
-        var calledMethods = ReadCalledMethods(artifact.Program.GetType().GetMethod(nameof(IPdVmProgram.RunStep))!);
+        var calledMethods = ReadCalledMethods(GetCompiledRunStep(artifact.Program));
 
         Assert.Equal(PdVmStatusKind.Halted, result.Status.Kind);
         var map = Assert.Single(artifact.Program.Stack).AsMap();
@@ -185,6 +218,32 @@ public sealed class PdVmCompilerTests
         Assert.Equal(PdVmStatusKind.Halted, result.Status.Kind);
         var stack = Assert.Single(program.Stack);
         Assert.Equal(42, stack.AsInt());
+    }
+
+    [Fact]
+    public void PreservesClrEvaluationStateAcrossHostYieldBoundary()
+    {
+        var program = CompileProgram(
+            constants: [PdVmValue.FromInt(21)],
+            code: new BytecodeBuilder()
+                .EmitLdc(0)
+                .EmitCall(0, 1)
+                .Emit(PdVmBytecodeOpCode.Ret)
+                .Build(),
+            imports: [new PdVmHostImport("double_after_yield", 1, PdVmValueType.Int)]);
+        var callCount = 0;
+        var host = new PdVmDelegateHost();
+        host.Register(
+            "double_after_yield",
+            args => ++callCount == 1
+                ? PdVmCallOutcome.Yielded()
+                : PdVmCallOutcome.Returned(PdVmCallReturn.One(PdVmValue.FromInt(args[0].AsInt() * 2))));
+
+        var result = PdVmExecution.Run(program, host);
+
+        Assert.Equal(PdVmStatusKind.Halted, result.Status.Kind);
+        Assert.Equal(2, callCount);
+        Assert.Equal(42, Assert.Single(program.Stack).AsInt());
     }
 
     [Fact]
@@ -326,6 +385,43 @@ public sealed class PdVmCompilerTests
             () => PdVmExecution.Run(program, new PdVmDelegateHost(), maxSteps: 3));
 
         Assert.Equal("execution exceeded 3 steps", exception.Message);
+    }
+
+    [Fact]
+    public void ExecutesFiniteBackwardBranchesInsideOneGeneratedMethodCall()
+    {
+        var code = new BytecodeBuilder()
+            .EmitLdc(0)
+            .EmitStloc(0)
+            .MarkLabel("loop")
+            .EmitLdloc(0)
+            .EmitLdc(1)
+            .Emit(PdVmBytecodeOpCode.Sub)
+            .Emit(PdVmBytecodeOpCode.Dup)
+            .EmitStloc(0)
+            .EmitLdc(2)
+            .Emit(PdVmBytecodeOpCode.Cgt)
+            .EmitBrfalse("done")
+            .EmitBr("loop")
+            .MarkLabel("done")
+            .EmitLdloc(0)
+            .Emit(PdVmBytecodeOpCode.Ret)
+            .Build();
+
+        var program = CompileProgram(
+            constants:
+            [
+                PdVmValue.FromInt(3),
+                PdVmValue.FromInt(1),
+                PdVmValue.FromInt(0),
+            ],
+            code: code);
+
+        var status = program.RunStep(new PdVmDelegateHost(), instructionBudget: 100);
+
+        Assert.Equal(PdVmStatusKind.Halted, status.Kind);
+        Assert.Equal(0, Assert.Single(program.Stack).AsInt());
+        Assert.True(program.ExecutedInstructionCount > 13);
     }
 
     private static IPdVmProgram CompileProgram(
@@ -505,6 +601,28 @@ public sealed class PdVmCompilerTests
 
         return calledMethods;
     }
+
+    private static IReadOnlyList<OpCode> ReadOpCodes(MethodInfo method)
+    {
+        var body = method.GetMethodBody() ?? throw new InvalidOperationException("method has no body");
+        var bytes = body.GetILAsByteArray() ?? Array.Empty<byte>();
+        var opCodes = new List<OpCode>();
+        var offset = 0;
+        while (offset < bytes.Length)
+        {
+            var opCode = ReadOpCode(bytes, ref offset);
+            opCodes.Add(opCode);
+            offset += GetOperandSize(opCode.OperandType, bytes, offset);
+        }
+
+        return opCodes;
+    }
+
+    private static MethodInfo GetCompiledRunStep(IPdVmProgram program) =>
+        program.GetType().GetMethod(
+            nameof(IPdVmProgram.RunStep),
+            new[] { typeof(IPdVmHost), typeof(int) }) ??
+        throw new InvalidOperationException("compiled RunStep method not found");
 
     private static OpCode ReadOpCode(byte[] bytes, ref int offset)
     {

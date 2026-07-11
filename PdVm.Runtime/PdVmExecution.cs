@@ -13,7 +13,7 @@ public static class PdVmExecution
         while (executedSteps < maxSteps)
         {
             var before = program.ExecutedInstructionCount;
-            var status = program.RunStep(host);
+            var status = program.RunStep(host, maxSteps - executedSteps);
             executedSteps = CheckedAccumulateSteps(executedSteps, program, before, maxSteps);
             switch (status.Kind)
             {
@@ -43,7 +43,7 @@ public static class PdVmExecution
         {
             cancellationToken.ThrowIfCancellationRequested();
             var before = program.ExecutedInstructionCount;
-            var status = program.RunStep(host);
+            var status = program.RunStep(host, maxSteps - executedSteps);
             executedSteps = CheckedAccumulateSteps(executedSteps, program, before, maxSteps);
             switch (status.Kind)
             {

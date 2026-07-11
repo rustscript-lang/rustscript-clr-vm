@@ -207,9 +207,18 @@ public static class PdEdgeProgramLoader
 
     private static bool IsWorkspaceRoot(string candidate)
     {
-        return File.Exists(Path.Combine(candidate, "Cargo.toml")) &&
-               Directory.Exists(Path.Combine(candidate, "pd-edge")) &&
-               Directory.Exists(Path.Combine(candidate, "pd-vm"));
+        if (!File.Exists(Path.Combine(candidate, "Cargo.toml")))
+        {
+            return false;
+        }
+
+        var isLegacyMonorepo =
+            Directory.Exists(Path.Combine(candidate, "pd-edge")) &&
+            Directory.Exists(Path.Combine(candidate, "pd-vm"));
+        var isSplitEdgeWorkspace =
+            Directory.Exists(Path.Combine(candidate, "pd-edge-abi")) &&
+            Directory.Exists(Path.Combine(candidate, "pd-edge-host-function"));
+        return isLegacyMonorepo || isSplitEdgeWorkspace;
     }
 
     private static string? FindPrebuiltCompilerBinary(string workspaceRoot)
