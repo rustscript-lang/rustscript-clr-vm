@@ -7,6 +7,7 @@ public sealed class PdVmDelegateHost : IAsyncPdVmHost
     private readonly Dictionary<string, Func<IReadOnlyList<PdVmValue>, CancellationToken, ValueTask<PdVmCallReturn>>> _asyncHandlers =
         new(StringComparer.Ordinal);
     private readonly Dictionary<ulong, Task<PdVmCallReturn>> _pendingOperations = new();
+    private Func<string, IReadOnlyList<PdVmValue>, PdVmCallOutcome>? _fallback;
     private long _nextOpId;
 
     public void Register(string name, Func<IReadOnlyList<PdVmValue>, PdVmCallOutcome> handler)
@@ -40,6 +41,11 @@ public sealed class PdVmDelegateHost : IAsyncPdVmHost
             async (args, cancellationToken) => PdVmCallReturn.One(await handler(args, cancellationToken)));
     }
 
+    public void RegisterFallback(Func<string, IReadOnlyList<PdVmValue>, PdVmCallOutcome> handler)
+    {
+        _fallback = handler ?? throw new ArgumentNullException(nameof(handler));
+    }
+
     public PdVmCallOutcome Call(string name, IReadOnlyList<PdVmValue> args)
     {
         if (_syncHandlers.TryGetValue(name, out var syncHandler))
@@ -52,6 +58,11 @@ public sealed class PdVmDelegateHost : IAsyncPdVmHost
             var opId = (ulong)Interlocked.Increment(ref _nextOpId);
             _pendingOperations[opId] = asyncHandler(args, CancellationToken.None).AsTask();
             return PdVmCallOutcome.Pending(opId);
+        }
+
+        if (_fallback is not null)
+        {
+            return _fallback(name, args);
         }
 
         throw new InvalidOperationException($"unbound host import '{name}'");

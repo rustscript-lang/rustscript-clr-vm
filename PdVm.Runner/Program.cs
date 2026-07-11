@@ -1,7 +1,11 @@
 using PdVm.Compiler;
 using PdVm.Runtime;
 
-return await ProgramEntry.RunAsync(args);
+internal static class Program
+{
+    [STAThread]
+    public static Task<int> Main(string[] args) => ProgramEntry.RunAsync(args);
+}
 
 internal static class ProgramEntry
 {
@@ -19,6 +23,8 @@ internal static class ProgramEntry
             {
                 case "compile":
                     return RunCompile(args);
+                case "compile-source":
+                    return RunCompileSource(args);
                 case "run":
                     return await RunAssemblyAsync(args);
                 case "compile-run":
@@ -47,6 +53,32 @@ internal static class ProgramEntry
         return 0;
     }
 
+    private static int RunCompileSource(IReadOnlyList<string> args)
+    {
+        if (args.Count < 3)
+        {
+            throw new ArgumentException("compile-source requires <input.rss> <output.dll>");
+        }
+
+        var profile = GetOption(args, "--profile")?.ToLowerInvariant() switch
+        {
+            null or "common" => PdVmDotNetInteropProfile.Common,
+            "winforms" => PdVmDotNetInteropProfile.Common | PdVmDotNetInteropProfile.WindowsForms,
+            var value => throw new ArgumentException($"unknown .NET interop profile '{value}'"),
+        };
+        var output = PdVmDotNetSourceCompiler.CompileFile(
+            args[1],
+            args[2],
+            new PdVmDotNetSourceCompileOptions
+            {
+                Profile = profile,
+                RustScriptCompilerPath = GetOption(args, "--rustscript-compiler"),
+                SourceRoot = GetOption(args, "--source-root"),
+            });
+        Console.WriteLine(output);
+        return 0;
+    }
+
     private static async Task<int> RunAssemblyAsync(IReadOnlyList<string> args)
     {
         if (args.Count < 2)
@@ -56,6 +88,9 @@ internal static class ProgramEntry
 
         var program = PdVmAssemblyLoader.LoadProgram(args[1]);
         var host = PdVmDefaultHost.CreateConsoleHost();
+        var dotNetHost = new PdVmDotNetHost(
+            allowDynamicSystemCalls: HasFlag(args, "--enable-dynamic-dotnet"));
+        host.RegisterFallback(dotNetHost.Call);
         var result = await PdVmExecution.RunAsync(program, host, GetMaxSteps(args, 2));
         Console.WriteLine($"status={result.Status} steps={result.Steps}");
         return 0;
@@ -110,13 +145,37 @@ internal static class ProgramEntry
         return defaultMaxSteps;
     }
 
+    private static bool HasFlag(IReadOnlyList<string> args, string flag) =>
+        args.Any(arg => string.Equals(arg, flag, StringComparison.Ordinal));
+
+    private static string? GetOption(IReadOnlyList<string> args, string option)
+    {
+        for (var index = 0; index < args.Count; index++)
+        {
+            if (!string.Equals(args[index], option, StringComparison.Ordinal))
+            {
+                continue;
+            }
+            if (index + 1 >= args.Count)
+            {
+                throw new ArgumentException($"{option} requires a value");
+            }
+            return args[index + 1];
+        }
+        return null;
+    }
+
     private static void PrintUsage()
     {
         Console.Error.WriteLine("Usage:");
         Console.Error.WriteLine("  PdVm.Runner compile <input.vmbc> <output.dll>");
-        Console.Error.WriteLine("  PdVm.Runner run <program.dll> [--max-steps <count>]");
+        Console.Error.WriteLine("  PdVm.Runner compile-source <input.rss> <output.dll> [--profile common|winforms]");
+        Console.Error.WriteLine("    [--rustscript-compiler <path>] [--source-root <path>]");
+        Console.Error.WriteLine("  PdVm.Runner run <program.dll> [--max-steps <count>] [--enable-dynamic-dotnet]");
         Console.Error.WriteLine("    --max-steps is enforced inside generated CLR code");
-        Console.Error.WriteLine("  PdVm.Runner compile-run <input.vmbc> [output.dll] [--max-steps <count>]");
+        Console.Error.WriteLine("    --enable-dynamic-dotnet enables the experimental reflection host");
+        Console.Error.WriteLine("  PdVm.Runner compile-run <input.vmbc> [output.dll] [--max-steps <count>] [--enable-dynamic-dotnet]");
         Console.Error.WriteLine("    --max-steps is enforced inside generated CLR code");
+        Console.Error.WriteLine("    --enable-dynamic-dotnet enables the experimental reflection host");
     }
 }

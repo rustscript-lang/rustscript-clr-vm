@@ -27,7 +27,7 @@ CLR runtime and compiler support for PD VM bytecode. The repository includes the
 
 ## Requirements
 
-- .NET 9 SDK
+- .NET 10 SDK
 - Rust toolchain if you want:
   - `PdEdge.Http --program-source ...`
   - the Rust HTTP perf harness
@@ -96,6 +96,27 @@ Example source files are in `examples/`:
 
 ## Compile VMBC To CLR
 
+Compile RustScript source with generated typed .NET modules and the unmodified upstream compiler:
+
+```powershell
+dotnet run --project PdVm.Runner -- compile-source `
+  examples\dotnet-typed-console.rss `
+  artifacts\dotnet-typed-console.dll
+dotnet run --project PdVm.Runner -- run artifacts\dotnet-typed-console.dll
+```
+
+The `winforms` profile includes the common profile and the initial Windows Forms surface:
+
+```powershell
+dotnet run --project PdVm.Runner -- compile-source `
+  examples\dotnet-typed-winforms.rss `
+  artifacts\dotnet-typed-winforms.dll `
+  --profile winforms
+dotnet run --project PdVm.Runner -- run artifacts\dotnet-typed-winforms.dll
+```
+
+`--rustscript-compiler <path>` selects `pd-vm-run`; `--source-root <path>` sets the module-tree root. Typed imports carry exact CLR assembly, module, type, member, parameter, and return identities. Name-based dynamic reflection remains behind `--enable-dynamic-dotnet`.
+
 Compile a `VMBC` file to a CLR assembly:
 
 ```powershell
@@ -123,6 +144,14 @@ dotnet run --project PdVm.Runner -- run output.dll --max-steps 1000000
 ```
 
 `--max-steps` is enforced by budget checks in the generated CLR method. Backward branches remain native CLR branches and do not return to the C# execution driver.
+
+Experimental dynamic .NET reflection is available only when explicitly enabled:
+
+```powershell
+dotnet run --project PdVm.Runner -- run output.dll --enable-dynamic-dotnet
+```
+
+This mode is intended for interop development and the WinForms smoke example. It is not the typed wrapper described in `docs/dotnet-interop-wrapper-plan.md` and must not be used for untrusted programs.
 
 ## Run The Minimal HTTP Proxy
 
@@ -193,7 +222,7 @@ Then run the Rust benchmark harness against the built executable:
 
 ```powershell
 cargo run -p pd-edge --example http_proxy_perf_framework -- `
-  --binary d:\Workspace\project-d\PdEdge.Http\bin\Release\net9.0\pd-edge-http-minimal-clr.exe `
+  --binary d:\Workspace\project-d\PdEdge.Http\bin\Release\net10.0\pd-edge-http-minimal-clr.exe `
   --skip-build `
   --scenario http_proxy `
   --requests 2000 `
@@ -205,7 +234,7 @@ Body-read scenario:
 
 ```powershell
 cargo run -p pd-edge --example http_proxy_perf_framework -- `
-  --binary d:\Workspace\project-d\PdEdge.Http\bin\Release\net9.0\pd-edge-http-minimal-clr.exe `
+  --binary d:\Workspace\project-d\PdEdge.Http\bin\Release\net10.0\pd-edge-http-minimal-clr.exe `
   --skip-build `
   --scenario http_proxy_body_read `
   --requests 2000 `

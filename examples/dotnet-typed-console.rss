@@ -1,0 +1,13 @@
+use system::System::Console;
+use system::System::IO::Path;
+use system::System::Text::StringBuilder;
+
+Console::WriteLine("typed .NET interop from RustScript");
+let name: string = Path::GetFileName("examples/demo.rss");
+Console::WriteLine(name);
+
+let builder: int = StringBuilder::New();
+StringBuilder::Append(builder, "CLR ");
+StringBuilder::Append(builder, "object handle");
+Console::WriteLine(StringBuilder::ToString(builder));
+StringBuilder::Release(builder);

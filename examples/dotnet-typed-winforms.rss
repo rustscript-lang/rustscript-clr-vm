@@ -1,0 +1,34 @@
+use system::System::Windows::Forms::Form;
+use system::System::Windows::Forms::Label;
+use system::System::Windows::Forms::Button;
+use system::System::Windows::Forms::ControlCollection;
+
+let form: int = Form::NewForm();
+Form::SetFormText(form, "Typed RustScript UI - .NET 10");
+Form::SetFormWidth(form, 640);
+Form::SetFormHeight(form, 360);
+Form::SetFormStartPosition(form, "CenterScreen");
+
+let label: int = Label::NewLabel();
+Label::SetLabelText(label, "RustScript called a typed Windows Forms profile");
+Label::SetLabelLeft(label, 32);
+Label::SetLabelTop(label, 32);
+Label::SetLabelAutoSize(label, true);
+
+let button: int = Button::NewButton();
+Button::SetButtonText(button, "OK");
+Button::SetButtonLeft(button, 32);
+Button::SetButtonTop(button, 72);
+Button::SetButtonWidth(button, 96);
+Button::SetButtonDialogResult(button, "OK");
+Form::SetFormAcceptButton(form, button);
+
+let controls: int = Form::GetFormControls(form);
+ControlCollection::AddControl(controls, label);
+ControlCollection::AddControl(controls, button);
+Form::ShowFormDialog(form);
+
+Button::ReleaseButton(button);
+Label::ReleaseLabel(label);
+ControlCollection::ReleaseControlCollection(controls);
+Form::ReleaseForm(form);

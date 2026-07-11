@@ -1,0 +1,31 @@
+use system;
+
+let form: int = system::System::Windows::Forms::Form::new();
+system::object::set(form, "Text", "RustScript CLR UI - .NET 10");
+system::object::set(form, "Width", 640);
+system::object::set(form, "Height", 360);
+system::object::set(form, "StartPosition", "CenterScreen");
+
+let label: int = system::System::Windows::Forms::Label::new();
+system::object::set(label, "Text", "RustScript is calling Windows Forms on .NET 10");
+system::object::set(label, "Left", 32);
+system::object::set(label, "Top", 32);
+system::object::set(label, "AutoSize", true);
+
+let button: int = system::System::Windows::Forms::Button::new();
+system::object::set(button, "Text", "OK");
+system::object::set(button, "Left", 32);
+system::object::set(button, "Top", 72);
+system::object::set(button, "Width", 96);
+system::object::set(button, "DialogResult", "OK");
+system::object::set(form, "AcceptButton", button);
+
+let controls: int = system::object::get(form, "Controls");
+system::object::call(controls, "Add", [label]);
+system::object::call(controls, "Add", [button]);
+system::object::call(form, "ShowDialog", []);
+
+system::object::release(button);
+system::object::release(label);
+system::object::release(controls);
+system::object::release(form);
