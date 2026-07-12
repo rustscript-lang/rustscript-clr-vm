@@ -5,7 +5,7 @@ namespace PdVm.Compiler;
 
 public static class PdVmNativeCompiler
 {
-    private const string NativeLibraryName = "pd_vm_compiler";
+    private const string NativeLibraryName = "Pdvm.Compiler.Native";
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate int CompileFileDelegate(
@@ -135,7 +135,7 @@ public static class PdVmNativeCompiler
             return ResolveLibraryPath(environmentPath);
         }
 
-        var fileName = GetLibraryFileName();
+        var fileNames = new[] { GetLibraryFileName(), GetCargoBuildLibraryFileName() };
         foreach (var directory in new[]
                  {
                      AppContext.BaseDirectory,
@@ -143,10 +143,13 @@ public static class PdVmNativeCompiler
                      Environment.CurrentDirectory,
                  }.Where(path => !string.IsNullOrWhiteSpace(path)).Distinct(StringComparer.OrdinalIgnoreCase))
         {
-            var candidate = Path.Combine(directory!, fileName);
-            if (File.Exists(candidate))
+            foreach (var fileName in fileNames)
             {
-                return candidate;
+                var candidate = Path.Combine(directory!, fileName);
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
             }
         }
 
@@ -157,16 +160,19 @@ public static class PdVmNativeCompiler
             {
                 foreach (var configuration in new[] { "debug", "release" })
                 {
-                    var candidate = Path.Combine(
-                        directory.FullName,
-                        "native",
-                        "pd-vm-compiler",
-                        "target",
-                        configuration,
-                        fileName);
-                    if (File.Exists(candidate))
+                    foreach (var fileName in fileNames)
                     {
-                        return candidate;
+                        var candidate = Path.Combine(
+                            directory.FullName,
+                            "native",
+                            "pd-vm-compiler",
+                            "target",
+                            configuration,
+                            fileName);
+                        if (File.Exists(candidate))
+                        {
+                            return candidate;
+                        }
                     }
                 }
                 directory = directory.Parent;
@@ -174,10 +180,17 @@ public static class PdVmNativeCompiler
         }
 
         throw new DllNotFoundException(
-            $"{fileName} was not found beside the application. Set PDVM_NATIVE_COMPILER to its full path.");
+            $"{GetLibraryFileName()} was not found beside the application. Set PDVM_NATIVE_COMPILER to its full path.");
     }
 
     public static string GetLibraryFileName() =>
+        OperatingSystem.IsWindows()
+            ? "Pdvm.Compiler.Native.dll"
+            : OperatingSystem.IsMacOS()
+                ? "libPdvm.Compiler.Native.dylib"
+                : "libPdvm.Compiler.Native.so";
+
+    private static string GetCargoBuildLibraryFileName() =>
         OperatingSystem.IsWindows()
             ? "pd_vm_compiler.dll"
             : OperatingSystem.IsMacOS()

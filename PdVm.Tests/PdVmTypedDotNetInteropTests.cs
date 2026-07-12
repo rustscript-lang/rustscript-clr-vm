@@ -6,6 +6,18 @@ namespace PdVm.Tests;
 public sealed class PdVmTypedDotNetInteropTests
 {
     [Fact]
+    public void NativeLibraryUsesDotNetStylePackageName()
+    {
+        var expected = OperatingSystem.IsWindows()
+            ? "Pdvm.Compiler.Native.dll"
+            : OperatingSystem.IsMacOS()
+                ? "libPdvm.Compiler.Native.dylib"
+                : "libPdvm.Compiler.Native.so";
+
+        Assert.Equal(expected, PdVmNativeCompiler.GetLibraryFileName());
+    }
+
+    [Fact]
     public void NativeCompilerEmitsReadableVmbcWithoutRunnerProcess()
     {
         using var fixture = new SourceFixture("let answer: int = 40 + 2;\n");

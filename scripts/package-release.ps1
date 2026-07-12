@@ -38,6 +38,13 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $nativeName = if ($RuntimeIdentifier -eq 'win-x64') {
+    'Pdvm.Compiler.Native.dll'
+} elseif ($RuntimeIdentifier -eq 'osx-arm64') {
+    'libPdvm.Compiler.Native.dylib'
+} else {
+    'libPdvm.Compiler.Native.so'
+}
+$cargoNativeName = if ($RuntimeIdentifier -eq 'win-x64') {
     'pd_vm_compiler.dll'
 } elseif ($RuntimeIdentifier -eq 'osx-arm64') {
     'libpd_vm_compiler.dylib'
@@ -45,7 +52,7 @@ $nativeName = if ($RuntimeIdentifier -eq 'win-x64') {
     'libpd_vm_compiler.so'
 }
 $nativeRoot = Join-Path $repoRoot "native/pd-vm-compiler/target/$RustTarget/release"
-Copy-Item -LiteralPath (Join-Path $nativeRoot $nativeName) -Destination $packageRoot
+Copy-Item -LiteralPath (Join-Path $nativeRoot $cargoNativeName) -Destination (Join-Path $packageRoot $nativeName)
 Get-ChildItem -LiteralPath $nativeRoot -Filter '*.pdb' -File | Copy-Item -Destination $packageRoot
 
 $requiredFiles = @(

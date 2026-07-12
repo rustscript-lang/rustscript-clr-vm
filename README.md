@@ -72,7 +72,7 @@ PdVm.Runner.exe emit-vmbc `
   path\to\program.vmbc
 ```
 
-Managed callers can use `PdVmNativeCompiler.CompileFile` or `CompileFileToVmbc` from `PdVm.Compiler.dll`. The native ABI returns VMBC bytes or a UTF-8 diagnostic and releases result buffers through the matching Rust export.
+Managed callers can use `PdVmNativeCompiler.CompileFile` or `CompileFileToVmbc` from `PdVm.Compiler.dll`. The packaged native library is named `Pdvm.Compiler.Native.dll` on Windows, `libPdvm.Compiler.Native.dylib` on macOS, and `libPdvm.Compiler.Native.so` on Linux. The native ABI returns VMBC bytes or a UTF-8 diagnostic and releases result buffers through the matching Rust export.
 
 For a PD Edge HTTP proxy script, use the Edge helper so imports are checked against the Edge ABI:
 
