@@ -13,6 +13,10 @@ public sealed class PdVmCompileOptions
     public string TypeName { get; init; } = "PdVm.Generated.Program";
 
     public bool CopyRuntimeAssembly { get; init; } = true;
+
+    public IReadOnlyList<Type> ReferencedClrTypes { get; init; } = [];
+
+    public IReadOnlyList<string> AdditionalRuntimeAssemblyPaths { get; init; } = [];
 }
 
 public static class PdVmClrCompiler
@@ -248,6 +252,20 @@ public static class PdVmClrCompiler
             TypeAttributes.Public | TypeAttributes.Class | TypeAttributes.Sealed,
             typeof(PdVmProgramBase));
 
+        foreach (var (referencedType, index) in options.ReferencedClrTypes
+                     .Where(type => type.Assembly != typeof(PdVmProgramBase).Assembly)
+                     .Distinct()
+                     .OrderBy(type => type.AssemblyQualifiedName, StringComparer.Ordinal)
+                     .Select((type, index) => (type, index)))
+        {
+            // Keep a real AssemblyRef for each typed CLR import even though calls are
+            // dispatched through versioned descriptors at runtime.
+            typeBuilder.DefineField(
+                $"s_clr_reference_{index}",
+                referencedType,
+                FieldAttributes.Private | FieldAttributes.Static);
+        }
+
         var constantsField = typeBuilder.DefineField(
             "s_constants",
             typeof(PdVmValue[]),
@@ -272,6 +290,7 @@ public static class PdVmClrCompiler
         {
             CopyRuntimeAssembly(fullOutputPath);
         }
+        CopyAdditionalRuntimeAssemblies(fullOutputPath, options.AdditionalRuntimeAssemblyPaths);
         return fullOutputPath;
     }
 
@@ -292,6 +311,29 @@ public static class PdVmClrCompiler
                 StringComparison.OrdinalIgnoreCase))
         {
             File.Copy(runtimeSource, runtimeDestination, overwrite: true);
+        }
+    }
+
+    private static void CopyAdditionalRuntimeAssemblies(
+        string programAssemblyPath,
+        IReadOnlyList<string> assemblyPaths)
+    {
+        var outputDirectory = Path.GetDirectoryName(programAssemblyPath)!;
+        foreach (var source in assemblyPaths
+                     .Where(path => !string.IsNullOrWhiteSpace(path))
+                     .Select(Path.GetFullPath)
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (!File.Exists(source))
+            {
+                throw new FileNotFoundException("CLR reference assembly was not found", source);
+            }
+
+            var destination = Path.Combine(outputDirectory, Path.GetFileName(source));
+            if (!string.Equals(source, destination, StringComparison.OrdinalIgnoreCase))
+            {
+                File.Copy(source, destination, overwrite: true);
+            }
         }
     }
 

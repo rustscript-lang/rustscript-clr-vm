@@ -9,7 +9,7 @@ namespace PdVm.Runtime;
 
 public sealed class PdVmDotNetHost
 {
-    private const string Prefix = "system::";
+    private const string Prefix = "System::";
 
     private static readonly string[] CandidateAssemblies =
     [
@@ -46,6 +46,68 @@ public sealed class PdVmDotNetHost
         EnsureWindowsDesktopResolver();
     }
 
+    public static bool InitializeWindowsFormsApplication()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return false;
+        }
+
+        var host = new PdVmDotNetHost();
+        if (!host.TryResolveType("System.Windows.Forms.Application", out var application))
+        {
+            return false;
+        }
+
+        var highDpiMode = application.Assembly.GetType(
+            "System.Windows.Forms.HighDpiMode",
+            throwOnError: false,
+            ignoreCase: false);
+        var setHighDpiMode = highDpiMode is null
+            ? null
+            : application.GetMethod(
+                "SetHighDpiMode",
+                BindingFlags.Public | BindingFlags.Static,
+                binder: null,
+                types: [highDpiMode],
+                modifiers: null);
+        if (setHighDpiMode is not null && highDpiMode is not null)
+        {
+            TryInitializeWindowsForms(() =>
+                setHighDpiMode.Invoke(null, [Enum.Parse(highDpiMode, "PerMonitorV2", ignoreCase: false)]));
+        }
+
+        application.GetMethod(
+            "EnableVisualStyles",
+            BindingFlags.Public | BindingFlags.Static,
+            binder: null,
+            types: Type.EmptyTypes,
+            modifiers: null)!.Invoke(null, null);
+        TryInitializeWindowsForms(() =>
+            application.GetMethod(
+                "SetCompatibleTextRenderingDefault",
+                BindingFlags.Public | BindingFlags.Static,
+                binder: null,
+                types: [typeof(bool)],
+                modifiers: null)!.Invoke(null, [false]));
+
+        return application.GetProperty(
+            "RenderWithVisualStyles",
+            BindingFlags.Public | BindingFlags.Static)?.GetValue(null) is true;
+    }
+
+    private static void TryInitializeWindowsForms(Action action)
+    {
+        try
+        {
+            action();
+        }
+        catch (TargetInvocationException exception) when (exception.InnerException is InvalidOperationException)
+        {
+            // Another component initialized Windows Forms first. Visual styles can still be enabled.
+        }
+    }
+
     public PdVmCallOutcome Call(string name, IReadOnlyList<PdVmValue> args)
     {
         if (PdVmDotNetBindingDescriptor.TryDecodeImportName(name, out var descriptor))
@@ -59,10 +121,10 @@ public sealed class PdVmDotNetHost
 
         var value = name switch
         {
-            "system::object::call" => CallObject(args),
-            "system::object::get" => GetObjectProperty(args),
-            "system::object::set" => SetObjectProperty(args),
-            "system::object::release" => ReleaseObject(args),
+            "System::Object::Call" => CallObject(args),
+            "System::Object::Get" => GetObjectProperty(args),
+            "System::Object::Set" => SetObjectProperty(args),
+            "System::Object::Release" => ReleaseObject(args),
             _ => CallStaticOrConstructor(name, args),
         };
         return PdVmCallOutcome.Returned(PdVmCallReturn.One(value));
@@ -82,6 +144,21 @@ public sealed class PdVmDotNetHost
         }
         var type = assembly.GetType(descriptor.TypeName, throwOnError: true, ignoreCase: false)!;
         var parameterTypes = descriptor.ParameterTypeNames.Select(ResolveDescriptorType).ToArray();
+
+        if (RequiresWinFormsDispatcher(type, descriptor))
+        {
+            return PdVmWinFormsDispatcher.Invoke(() => CallExactResolved(descriptor, args, type, parameterTypes));
+        }
+
+        return CallExactResolved(descriptor, args, type, parameterTypes);
+    }
+
+    private PdVmValue CallExactResolved(
+        PdVmDotNetBindingDescriptor descriptor,
+        IReadOnlyList<PdVmValue> args,
+        Type type,
+        Type[] parameterTypes)
+    {
 
         if (descriptor.Kind == PdVmDotNetMemberKind.Release)
         {
@@ -123,6 +200,20 @@ public sealed class PdVmDotNetHost
             _ => throw new InvalidOperationException(
                 $"unsupported exact CLR binding kind {descriptor.Kind}"),
         };
+    }
+
+    private static bool RequiresWinFormsDispatcher(Type type, PdVmDotNetBindingDescriptor descriptor)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return false;
+        }
+        if (string.Equals(type.Assembly.GetName().Name, "System.Windows.Forms", StringComparison.Ordinal))
+        {
+            return true;
+        }
+        return type == typeof(PdVmWinFormsEventLoop) &&
+               !string.Equals(descriptor.MemberName, nameof(PdVmWinFormsEventLoop.Wait), StringComparison.Ordinal);
     }
 
     private PdVmValue InvokeExactMethod(
@@ -318,7 +409,7 @@ public sealed class PdVmDotNetHost
 
     private PdVmValue CallObject(IReadOnlyList<PdVmValue> args)
     {
-        RequireArgCount("system::object::call", args, 3);
+        RequireArgCount("System::Object::Call", args, 3);
         var target = GetObject(args[0]);
         var memberName = args[1].AsString();
         var callArgs = args[2].AsArray();
@@ -338,7 +429,7 @@ public sealed class PdVmDotNetHost
 
     private PdVmValue GetObjectProperty(IReadOnlyList<PdVmValue> args)
     {
-        RequireArgCount("system::object::get", args, 2);
+        RequireArgCount("System::Object::Get", args, 2);
         var target = GetObject(args[0]);
         var propertyName = args[1].AsString();
         var property = target.GetType().GetProperty(
@@ -357,7 +448,7 @@ public sealed class PdVmDotNetHost
 
     private PdVmValue SetObjectProperty(IReadOnlyList<PdVmValue> args)
     {
-        RequireArgCount("system::object::set", args, 3);
+        RequireArgCount("System::Object::Set", args, 3);
         var target = GetObject(args[0]);
         var propertyName = args[1].AsString();
         var property = target.GetType().GetProperty(
@@ -382,7 +473,7 @@ public sealed class PdVmDotNetHost
 
     private PdVmValue ReleaseObject(IReadOnlyList<PdVmValue> args)
     {
-        RequireArgCount("system::object::release", args, 1);
+        RequireArgCount("System::Object::Release", args, 1);
         var handle = args[0].AsInt();
         if (!_objects.Remove(handle, out var value))
         {

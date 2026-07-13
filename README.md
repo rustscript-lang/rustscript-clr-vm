@@ -107,6 +107,15 @@ dotnet run --project PdVm.Runner -- compile-source `
 dotnet run --project PdVm.Runner -- run artifacts\dotnet-typed-console.dll
 ```
 
+`run` also accepts an `.rss` source file and compiles it to a temporary CLR assembly before execution:
+
+```powershell
+dotnet run --project PdVm.Runner -- run examples\dotnet-typed-console.rss
+dotnet run --project PdVm.Runner -- run examples\dotnet-typed-winforms.rss --profile winforms
+```
+
+`dotnet-typed-winforms.rss` is a Notepad-style Windows application written in RustScript. It creates the form, menus, editor, dialogs, file actions, font and color actions, word-wrap action, and status bar in `.rss`. The typed Windows Forms profile supplies CLR bindings, a dedicated STA dispatcher, and a thin event queue; it does not contain application behavior.
+
 The `winforms` profile includes the common profile and the initial Windows Forms surface:
 
 ```powershell
@@ -118,6 +127,21 @@ dotnet run --project PdVm.Runner -- run artifacts\dotnet-typed-winforms.dll
 ```
 
 `--pd-vm-library <path>` selects an explicit native compiler library; `--source-root <path>` sets the module-tree root. By default the native library is loaded beside the Runner. Typed imports carry exact CLR assembly, module, type, member, parameter, and return identities. Name-based dynamic reflection remains behind `--enable-dynamic-dotnet`.
+
+Typed CLR imports use the C#-style `System` root. The source wrapper scans each reachable `use System::...` declaration, finds the concrete CLR type in the .NET runtime or a referenced DLL, and generates an exact typed module for its supported public members:
+
+```rust
+use System::Security::Cryptography::SHA256;
+
+let algorithm = SHA256::Create();
+SHA256::Release(algorithm);
+```
+
+For a third-party CLR assembly, place its DLL beside the source, under the source tree, beside the Runner, or in the current working directory. The wrapper finds it from the imported CLR type name, copies the selected DLL beside the generated program, and registers that output directory for runtime resolution:
+
+```powershell
+dotnet run --project PdVm.Runner -- compile-source crypto.rss crypto.dll
+```
 
 ## Release packages
 

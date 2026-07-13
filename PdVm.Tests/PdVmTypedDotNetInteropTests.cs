@@ -1,3 +1,4 @@
+using System.Reflection;
 using PdVm.Compiler;
 using PdVm.Runtime;
 
@@ -20,7 +21,7 @@ public sealed class PdVmTypedDotNetInteropTests
     [Fact]
     public void NativeCompilerEmitsReadableVmbcWithoutRunnerProcess()
     {
-        using var fixture = new SourceFixture("let answer: int = 40 + 2;\n");
+        using var fixture = new SourceFixture("let answer = 40 + 2;\n");
 
         var bytes = PdVmNativeCompiler.CompileFile(fixture.SourcePath);
         var model = PdVmVmbcReader.ReadBytes(bytes);
@@ -59,7 +60,7 @@ public sealed class PdVmTypedDotNetInteropTests
     {
         var error = Assert.Throws<InvalidOperationException>(() =>
             new PdVmDotNetHost().Call(
-                "system::Math::Sqrt",
+                "System::Math::Sqrt",
                 [PdVmValue.FromFloat(4)]));
 
         Assert.Contains("unbound host import", error.Message);
@@ -69,8 +70,8 @@ public sealed class PdVmTypedDotNetInteropTests
     public void SourceWrapperCompilesTypedCommonModuleWithOriginalCompiler()
     {
         using var fixture = new SourceFixture(
-            "use system::System::IO::Path;\n" +
-            "let name: string = Path::GetFileName(\"folder/demo.rss\");\n");
+            "use System::IO::Path;\n" +
+            "let name = Path::GetFileName(\"folder/demo.rss\");\n");
 
         var output = PdVmDotNetSourceCompiler.CompileFile(fixture.SourcePath, fixture.OutputPath);
 
@@ -83,7 +84,7 @@ public sealed class PdVmTypedDotNetInteropTests
     public void SourceWrapperReportsParameterTypeErrorsAtCompileTime()
     {
         using var fixture = new SourceFixture(
-            "use system::System::Console;\n" +
+            "use System::Console;\n" +
             "Console::WriteLine(123);\n");
 
         var error = Assert.Throws<PdVmCompilerException>(() =>
@@ -91,6 +92,148 @@ public sealed class PdVmTypedDotNetInteropTests
 
         Assert.Contains("RustScript compilation failed", error.Message);
         Assert.False(File.Exists(fixture.OutputPath));
+    }
+
+    [Fact]
+    public void SourceWrapperCompilesTypedWindowsFormsEventLoopProfile()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        using var fixture = new SourceFixture(
+            "use System::Windows::Forms::Form;\n" +
+            "use System::Windows::EventLoop as Ui;\n" +
+            "let form = Form::NewForm();\n" +
+            "Ui::UiBindClosing(form, \"close\");\n" +
+            "Ui::UiClose(form);\n");
+
+        var output = PdVmDotNetSourceCompiler.CompileFile(
+            fixture.SourcePath,
+            fixture.OutputPath,
+            new PdVmDotNetSourceCompileOptions
+            {
+                Profile = PdVmDotNetInteropProfile.Common | PdVmDotNetInteropProfile.WindowsForms,
+            });
+
+        Assert.True(File.Exists(output));
+        Assert.True(new FileInfo(output).Length > 0);
+    }
+
+    [Fact]
+    public void SourceWrapperCompilesRustScriptNotepadExample()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var examplePath = Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory,
+            "..", "..", "..", "..",
+            "examples",
+            "dotnet-typed-winforms.rss"));
+        using var fixture = new SourceFixture(File.ReadAllText(examplePath));
+
+        var output = PdVmDotNetSourceCompiler.CompileFile(
+            fixture.SourcePath,
+            fixture.OutputPath,
+            new PdVmDotNetSourceCompileOptions
+            {
+                Profile = PdVmDotNetInteropProfile.Common | PdVmDotNetInteropProfile.WindowsForms,
+            });
+
+        Assert.True(File.Exists(output));
+        Assert.True(new FileInfo(output).Length > 0);
+    }
+
+    [Fact]
+    public void WinFormsEventsReturnToRustScriptWithoutBlockingTheUiThread()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var signalPath = Path.Combine(
+            Path.GetTempPath(),
+            "pd-vm-typed-interop-tests",
+            $"event-{Guid.NewGuid():N}.txt");
+        Directory.CreateDirectory(Path.GetDirectoryName(signalPath)!);
+        using var fixture = new SourceFixture(
+            "use System::IO::File;\n" +
+            "use System::Windows::Forms::Form;\n" +
+            "use System::Windows::Forms::ToolStripMenuItem;\n" +
+            "use System::Windows::EventLoop as Ui;\n" +
+            "let form = Form::NewForm();\n" +
+            "let item = ToolStripMenuItem::NewToolStripMenuItem(\"Run\");\n" +
+            "Ui::UiBindClick(form, item, \"clicked\");\n" +
+            "Ui::UiShow(form);\n" +
+            "ToolStripMenuItem::PerformToolStripMenuItemClick(item);\n" +
+            "let action = Ui::UiWait(form);\n" +
+            $"File::WriteAllText(\"{signalPath.Replace('\\', '/')}\", action);\n" +
+            "Ui::UiClose(form);\n");
+
+        try
+        {
+            var output = PdVmDotNetSourceCompiler.CompileFile(
+                fixture.SourcePath,
+                fixture.OutputPath,
+                new PdVmDotNetSourceCompileOptions
+                {
+                    Profile = PdVmDotNetInteropProfile.Common | PdVmDotNetInteropProfile.WindowsForms,
+                });
+            var program = PdVmAssemblyLoader.CreateProgram(Assembly.Load(File.ReadAllBytes(output)));
+            var host = PdVmDefaultHost.CreateConsoleHost();
+            host.RegisterFallback(new PdVmDotNetHost().Call);
+
+            var result = PdVmExecution.Run(program, host);
+
+            Assert.Equal(PdVmStatusKind.Halted, result.Status.Kind);
+            Assert.Equal("clicked", File.ReadAllText(signalPath));
+        }
+        finally
+        {
+            File.Delete(signalPath);
+        }
+    }
+
+    [Fact]
+    public void SourceWrapperGeneratesTypedCryptographyBindingsFromSystemUse()
+    {
+        using var fixture = new SourceFixture(
+            "use System::Security::Cryptography::SHA256;\n" +
+            "let algorithm = SHA256::Create();\n" +
+            "SHA256::Release(algorithm);\n");
+
+        var output = PdVmDotNetSourceCompiler.CompileFile(fixture.SourcePath, fixture.OutputPath);
+
+        Assert.True(File.Exists(output));
+        Assert.True(new FileInfo(output).Length > 0);
+        var program = PdVmAssemblyLoader.CreateProgram(Assembly.Load(File.ReadAllBytes(output)));
+        Assert.Contains(
+            program.GetType().Assembly.GetReferencedAssemblies(),
+            assembly => assembly.Name == "System.Security.Cryptography");
+
+        var host = PdVmDefaultHost.CreateConsoleHost();
+        host.RegisterFallback(new PdVmDotNetHost().Call);
+        var result = PdVmExecution.Run(program, host);
+        Assert.Equal(PdVmStatusKind.Halted, result.Status.Kind);
+    }
+
+    [Fact]
+    public void SourceWrapperReportsReadableErrorForMissingSystemType()
+    {
+        using var fixture = new SourceFixture(
+            "use System::Security::Cryptography::MissingAlgorithm;\n");
+
+        var error = Assert.Throws<PdVmCompilerException>(() =>
+            PdVmDotNetSourceCompiler.CompileFile(fixture.SourcePath, fixture.OutputPath));
+
+        Assert.Contains("main.rss:1", error.Message);
+        Assert.Contains("System.Security.Cryptography.MissingAlgorithm", error.Message);
+        Assert.Contains("Searched the .NET runtime", error.Message);
     }
 
     private static PdVmValue ReturnValue(PdVmCallOutcome outcome) =>

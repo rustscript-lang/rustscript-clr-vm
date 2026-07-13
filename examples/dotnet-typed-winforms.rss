@@ -1,34 +1,163 @@
-use system::System::Windows::Forms::Form;
-use system::System::Windows::Forms::Label;
-use system::System::Windows::Forms::Button;
-use system::System::Windows::Forms::ControlCollection;
+// This Notepad application is written in RustScript. EventLoop only queues
+// WinForms events from the dedicated UI thread; behavior stays here.
+use System::IO::File;
+use System::Windows::Forms::Form;
+use System::Windows::Forms::RichTextBox;
+use System::Windows::Forms::MenuStrip;
+use System::Windows::Forms::ToolStripMenuItem;
+use System::Windows::Forms::ToolStripSeparator;
+use System::Windows::Forms::StatusStrip;
+use System::Windows::Forms::ToolStripStatusLabel;
+use System::Windows::Forms::Control::ControlCollection;
+use System::Windows::Forms::ToolStripItemCollection;
+use System::Windows::Forms::OpenFileDialog;
+use System::Windows::Forms::SaveFileDialog;
+use System::Windows::Forms::FontDialog;
+use System::Windows::Forms::ColorDialog;
+use System::Windows::EventLoop as Ui;
 
-let form: int = Form::NewForm();
-Form::SetFormText(form, "Typed RustScript UI - .NET 10");
-Form::SetFormWidth(form, 640);
-Form::SetFormHeight(form, 360);
+let form = Form::NewForm();
+Form::SetFormText(form, "Untitled - RustScript Notepad");
+Form::SetFormWidth(form, 960);
+Form::SetFormHeight(form, 640);
 Form::SetFormStartPosition(form, "CenterScreen");
 
-let label: int = Label::NewLabel();
-Label::SetLabelText(label, "RustScript called a typed Windows Forms profile");
-Label::SetLabelLeft(label, 32);
-Label::SetLabelTop(label, 32);
-Label::SetLabelAutoSize(label, true);
+let editor = RichTextBox::NewRichTextBox();
+RichTextBox::SetRichTextBoxDock(editor, "Fill");
+RichTextBox::SetRichTextBoxBorderStyle(editor, "None");
+RichTextBox::SetRichTextBoxWordWrap(editor, true);
 
-let button: int = Button::NewButton();
-Button::SetButtonText(button, "OK");
-Button::SetButtonLeft(button, 32);
-Button::SetButtonTop(button, 72);
-Button::SetButtonWidth(button, 96);
-Button::SetButtonDialogResult(button, "OK");
-Form::SetFormAcceptButton(form, button);
+let menu = MenuStrip::NewMenuStrip();
+MenuStrip::SetMenuStripDock(menu, "Top");
+Form::SetFormMainMenuStrip(form, menu);
+let menu_items = MenuStrip::GetMenuStripItems(menu);
 
-let controls: int = Form::GetFormControls(form);
-ControlCollection::AddControl(controls, label);
-ControlCollection::AddControl(controls, button);
-Form::ShowFormDialog(form);
+let file_menu = ToolStripMenuItem::NewToolStripMenuItem("&File");
+let format_menu = ToolStripMenuItem::NewToolStripMenuItem("F&ormat");
+let view_menu = ToolStripMenuItem::NewToolStripMenuItem("&View");
+ToolStripItemCollection::AddToolStripItem(menu_items, file_menu);
+ToolStripItemCollection::AddToolStripItem(menu_items, format_menu);
+ToolStripItemCollection::AddToolStripItem(menu_items, view_menu);
 
-Button::ReleaseButton(button);
-Label::ReleaseLabel(label);
-ControlCollection::ReleaseControlCollection(controls);
-Form::ReleaseForm(form);
+let new_item = ToolStripMenuItem::NewToolStripMenuItem("&New");
+let open_item = ToolStripMenuItem::NewToolStripMenuItem("&Open...");
+let save_item = ToolStripMenuItem::NewToolStripMenuItem("&Save");
+let save_as_item = ToolStripMenuItem::NewToolStripMenuItem("Save &As...");
+let exit_item = ToolStripMenuItem::NewToolStripMenuItem("E&xit");
+ToolStripMenuItem::SetToolStripMenuItemShortcutKeys(new_item, "Control, N");
+ToolStripMenuItem::SetToolStripMenuItemShortcutKeys(open_item, "Control, O");
+ToolStripMenuItem::SetToolStripMenuItemShortcutKeys(save_item, "Control, S");
+ToolStripMenuItem::SetToolStripMenuItemShortcutKeys(save_as_item, "Control, Shift, S");
+let file_items = ToolStripMenuItem::GetToolStripMenuItemItems(file_menu);
+ToolStripItemCollection::AddToolStripItem(file_items, new_item);
+ToolStripItemCollection::AddToolStripItem(file_items, open_item);
+ToolStripItemCollection::AddToolStripItem(file_items, save_item);
+ToolStripItemCollection::AddToolStripItem(file_items, save_as_item);
+ToolStripItemCollection::AddToolStripItem(file_items, ToolStripSeparator::NewToolStripSeparator());
+ToolStripItemCollection::AddToolStripItem(file_items, exit_item);
+
+let font_item = ToolStripMenuItem::NewToolStripMenuItem("&Font...");
+let color_item = ToolStripMenuItem::NewToolStripMenuItem("Text &Color...");
+let format_items = ToolStripMenuItem::GetToolStripMenuItemItems(format_menu);
+ToolStripItemCollection::AddToolStripItem(format_items, font_item);
+ToolStripItemCollection::AddToolStripItem(format_items, color_item);
+
+let wrap_item = ToolStripMenuItem::NewToolStripMenuItem("&Word Wrap");
+ToolStripMenuItem::SetToolStripMenuItemChecked(wrap_item, true);
+let view_items = ToolStripMenuItem::GetToolStripMenuItemItems(view_menu);
+ToolStripItemCollection::AddToolStripItem(view_items, wrap_item);
+
+let status = StatusStrip::NewStatusStrip();
+StatusStrip::SetStatusStripDock(status, "Bottom");
+let status_label = ToolStripStatusLabel::NewToolStripStatusLabel();
+ToolStripStatusLabel::SetToolStripStatusLabelText(status_label, "Ready");
+let status_items = StatusStrip::GetStatusStripItems(status);
+ToolStripItemCollection::AddToolStripItem(status_items, status_label);
+
+let controls = Form::GetFormControls(form);
+ControlCollection::AddControl(controls, editor);
+ControlCollection::AddControl(controls, status);
+ControlCollection::AddControl(controls, menu);
+
+let open_dialog = OpenFileDialog::NewOpenFileDialog();
+OpenFileDialog::SetOpenFileDialogFilter(open_dialog, "Text documents (*.txt)|*.txt|All files (*.*)|*.*");
+OpenFileDialog::SetOpenFileDialogTitle(open_dialog, "Open");
+let save_dialog = SaveFileDialog::NewSaveFileDialog();
+SaveFileDialog::SetSaveFileDialogFilter(save_dialog, "Text documents (*.txt)|*.txt|All files (*.*)|*.*");
+SaveFileDialog::SetSaveFileDialogTitle(save_dialog, "Save As");
+SaveFileDialog::SetSaveFileDialogDefaultExt(save_dialog, "txt");
+SaveFileDialog::SetSaveFileDialogAddExtension(save_dialog, true);
+let font_dialog = FontDialog::NewFontDialog();
+let color_dialog = ColorDialog::NewColorDialog();
+
+Ui::UiBindClick(form, new_item, "new");
+Ui::UiBindDialog(form, open_item, open_dialog, "open");
+Ui::UiBindDialog(form, save_item, save_dialog, "save");
+Ui::UiBindDialog(form, save_as_item, save_dialog, "save_as");
+Ui::UiBindDialog(form, font_item, font_dialog, "font");
+Ui::UiBindDialog(form, color_item, color_dialog, "color");
+Ui::UiBindClick(form, wrap_item, "wrap");
+Ui::UiBindClick(form, exit_item, "close");
+Ui::UiBindClosing(form, "close");
+Ui::UiShow(form);
+
+let mut current_path = "";
+let mut word_wrap = true;
+while true {
+    let action = Ui::UiWait(form);
+    if action == "new" {
+        RichTextBox::SetRichTextBoxText(editor, "");
+        current_path = "";
+        Form::SetFormText(form, "Untitled - RustScript Notepad");
+        ToolStripStatusLabel::SetToolStripStatusLabelText(status_label, "New document");
+    }
+    if action == "open" {
+        if Ui::UiShowDialog(form, open_dialog) == "OK" {
+            current_path = OpenFileDialog::GetOpenFileDialogFileName(open_dialog);
+            RichTextBox::SetRichTextBoxText(editor, File::ReadAllText(current_path));
+            Form::SetFormText(form, current_path + " - RustScript Notepad");
+            ToolStripStatusLabel::SetToolStripStatusLabelText(status_label, "Opened " + current_path);
+        }
+    }
+    if action == "save" {
+        if current_path == "" {
+            if Ui::UiShowDialog(form, save_dialog) == "OK" {
+                current_path = SaveFileDialog::GetSaveFileDialogFileName(save_dialog);
+            }
+        }
+        if current_path != "" {
+            File::WriteAllText(current_path, RichTextBox::GetRichTextBoxText(editor));
+            Form::SetFormText(form, current_path + " - RustScript Notepad");
+            ToolStripStatusLabel::SetToolStripStatusLabelText(status_label, "Saved " + current_path);
+        }
+    }
+    if action == "save_as" {
+        SaveFileDialog::SetSaveFileDialogFileName(save_dialog, current_path);
+        if Ui::UiShowDialog(form, save_dialog) == "OK" {
+            current_path = SaveFileDialog::GetSaveFileDialogFileName(save_dialog);
+            File::WriteAllText(current_path, RichTextBox::GetRichTextBoxText(editor));
+            Form::SetFormText(form, current_path + " - RustScript Notepad");
+            ToolStripStatusLabel::SetToolStripStatusLabelText(status_label, "Saved " + current_path);
+        }
+    }
+    if action == "font" {
+        if Ui::UiShowDialog(form, font_dialog) == "OK" {
+            RichTextBox::SetRichTextBoxFont(editor, FontDialog::GetFontDialogFont(font_dialog));
+        }
+    }
+    if action == "color" {
+        if Ui::UiShowDialog(form, color_dialog) == "OK" {
+            RichTextBox::SetRichTextBoxForeColor(editor, ColorDialog::GetColorDialogColor(color_dialog));
+        }
+    }
+    if action == "wrap" {
+        word_wrap = !word_wrap;
+        RichTextBox::SetRichTextBoxWordWrap(editor, word_wrap);
+        ToolStripMenuItem::SetToolStripMenuItemChecked(wrap_item, word_wrap);
+        ToolStripStatusLabel::SetToolStripStatusLabelText(status_label, "Word wrap changed");
+    }
+    if action == "close" || action == "__closed" {
+        Ui::UiClose(form);
+        break;
+    }
+}

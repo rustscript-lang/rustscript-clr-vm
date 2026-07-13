@@ -4,13 +4,13 @@
 
 The typed wrapper pipeline is implemented in this repository. `PdVm.Runner compile-source` builds a temporary source overlay, generates concrete RustScript declarations for the selected profile, invokes the unmodified upstream compiler through the bundled native C ABI, remaps generated imports to versioned exact CLR descriptors, and lowers the result to CLR IL. The default runtime accepts these descriptors while name-based reflection requires the explicit experimental flag.
 
-The implemented common profile covers Console, Math, Path, File, and StringBuilder. The Windows-only `winforms` profile covers Form, Label, Button, ControlCollection, primitive properties, dialog display, and disposal. Metadata-driven user manifests and event/delegate adapters remain later extensions.
+The common profile preserves compact names for Console, Math, Path, File, and StringBuilder. The Windows-only `winforms` profile provides WinForms wrappers, a dedicated STA UI dispatcher, and a thin event queue bridge. RustScript owns UI behavior by waiting for queued named events in its own execution loop. In addition, the wrapper scans reachable `use System::...` imports and generates typed bindings from the resolved CLR type metadata.
 
 ## Decision
 
 The upstream RustScript compiler and Rust runtime remain unmodified. This repository owns a source-compilation wrapper that presents generated, typed RustScript modules to the upstream compiler and owns the CLR binding runtime used by the generated program.
 
-Raw implicit host calls such as `use system; system::Console::WriteLine(...)` must not be enabled by the default host. They erase the callable signature and let overload selection drift to runtime. The supported path must always pass through generated declarations and an exact CLR binding descriptor.
+Raw implicit host calls must not be enabled by the default host. They erase the callable signature and let overload selection drift to runtime. The supported path uses `use System::...` declarations, generated typed modules, and exact CLR binding descriptors.
 
 ## Invariants
 
@@ -27,14 +27,14 @@ Raw implicit host calls such as `use system; system::Console::WriteLine(...)` mu
 The wrapper materializes virtual modules in an overlay source root. The source remains ordinary RustScript:
 
 ```rust
-use system::System::Console;
-use system::System::IO::Path;
+use System::Console;
+use System::IO::Path;
 
 Console::WriteLine("hello");
-let name: string = Path::GetFileName("scripts/main.rss");
+let name = Path::GetFileName("scripts/main.rss");
 ```
 
-The generated `system/System/Console.rss` module is conceptually:
+The generated `System/Console.rss` module is conceptually:
 
 ```rust
 pub fn __clr_b_17d84a(value: string) -> null;
@@ -49,11 +49,11 @@ pub fn WriteLine(value: string) -> null {
 CLR objects use typed module functions rather than string-based instance dispatch:
 
 ```rust
-use system::System::Text::StringBuilder;
+use System::Text::StringBuilder;
 
-let builder: int = StringBuilder::New();
+let builder = StringBuilder::New();
 StringBuilder::Append(builder, "hello");
-let text: string = StringBuilder::ToString(builder);
+let text = StringBuilder::ToString(builder);
 StringBuilder::Release(builder);
 ```
 
@@ -77,9 +77,9 @@ flowchart LR
 
 ### 1. Import scan
 
-The wrapper recognizes only `use system::...;` directives. It does not parse or transform expressions. Normal RustScript syntax and type inference remain the responsibility of the upstream compiler.
+The wrapper scans reachable `use System::...` directives. It resolves each concrete type against trusted platform assemblies and user reference DLLs, then materializes a matching typed `.rss` module. It does not parse or transform expressions. Normal RustScript syntax and type inference remain the responsibility of the upstream compiler.
 
-The scan produces requested CLR type names and optional aliases. Imports outside the `system` root pass through unchanged.
+The scan produces requested CLR type names and optional aliases. Imports outside the `System` root pass through unchanged. A missing type reports the source path and line, the requested CLR type name, and how to supply a third-party reference.
 
 ### 2. Metadata resolution
 
@@ -87,20 +87,18 @@ Use `System.Reflection.Metadata` and `PEReader` against reference assemblies or 
 
 Resolution inputs are:
 
-- target framework and reference-pack path;
-- approved assembly paths;
-- an interop profile;
-- explicit user binding selections.
+- trusted platform assemblies and the target runtime;
+- DLLs beside the source, under the source root, beside the Runner, or in the current working directory;
+- an interop profile for curated convenience APIs.
 
 The result includes assembly identity, module MVID, type, member kind, static/instance flag, generic arity, exact parameter types, exact return type, and nullability where available.
 
 ### 3. Overload policy
 
-RustScript does not provide CLR-style overload sets. The wrapper therefore exposes a short method name only when the selected profile yields one unambiguous RustScript signature.
+RustScript does not provide CLR-style overload sets. The wrapper gives one deterministic preferred overload the short method name and gives additional compatible overloads deterministic type suffixes.
 
-- A common profile selects idiomatic overloads such as `Console.WriteLine(string)`.
-- A user manifest can select another exact overload.
-- Multiple selected overloads receive deterministic suffixes such as `WriteLineString` and `WriteLineInt`.
+- A common profile preserves idiomatic names such as `Console.WriteLine(string)`.
+- Metadata-generated modules use deterministic suffixes such as `WriteLineString` and `WriteLineInt` when more than one compatible overload exists.
 - `ref`, `out`, pointer, byref-like, open generic, and vararg members are rejected initially.
 - Generic catch-all declarations are not used because they hide the exact CLR contract.
 
@@ -125,7 +123,7 @@ Conversions that lose range or precision are rejected unless the binding profile
 
 ### 5. Source overlay
 
-The wrapper accepts a source root, copies or mirrors the RustScript module tree into a temporary overlay, and writes generated modules under `system/...`. The user's source tree is never modified.
+The wrapper accepts a source root, copies or mirrors the RustScript module tree into a temporary overlay, and writes generated modules under `System/...`. The user's source tree is never modified.
 
 The bundled `pd-vm-compiler` cdylib runs against the overlay and calls the upstream compiler API in-process. It pins an upstream compiler commit, disables the upstream runtime/CLI/JIT features, and exports a small C ABI for compilation and buffer release. The C# wrapper invokes that ABI with P/Invoke; no compiler process is launched.
 
@@ -167,9 +165,9 @@ Adding a profile entry requires a typed declaration golden test, an exact descri
 
 Windows Forms is a separate Windows-only profile loaded from `Microsoft.WindowsDesktop.App`.
 
-The first supported surface is constructors, primitive properties, control collections, `ShowDialog`, `DialogResult`, and deterministic disposal. The Runner uses STA for this profile.
+The supported surface includes constructors, primitive properties, control collections, dialogs, deterministic disposal, and the `EventLoop` bridge. The Runner uses STA for this profile.
 
-Delegate/event bridging is a later phase. It requires a callback queue that re-enters RustScript only at defined runtime boundaries; direct CLR-thread callbacks into a running generated method are forbidden.
+All typed WinForms calls are marshaled onto one dedicated STA thread running the native Windows Forms message loop. `EventLoop` queues named CLR events while RustScript waits on its execution thread. It never re-enters a running generated method from a CLR callback: RustScript receives the next action only after `EventLoop::UiWait` returns, then executes its own handler code. Modal dialogs remain on the UI thread and inherit its PerMonitorV2 DPI context.
 
 ## Project layout
 
@@ -192,7 +190,7 @@ interop-profiles/winforms.json
 5. Implement exact static calls, constructors, instance methods, properties, and handle lifetime.
 6. Add common-library end-to-end tests, including negative compile-time type tests.
 7. Add the Windows Forms profile, STA execution, and a non-blocking UI construction test.
-8. Add optional event adapters only after callback and re-entry semantics are specified.
+8. Add richer event adapters after callback queue semantics are validated for each control family.
 
 ## Completion gates
 
