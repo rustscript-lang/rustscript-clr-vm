@@ -212,8 +212,12 @@ public sealed class PdVmDotNetHost
         {
             return true;
         }
-        return type == typeof(PdVmWinFormsEventLoop) &&
-               !string.Equals(descriptor.MemberName, nameof(PdVmWinFormsEventLoop.Wait), StringComparison.Ordinal);
+        if (type != typeof(PdVmWinFormsEventLoop))
+        {
+            return false;
+        }
+        return !string.Equals(descriptor.MemberName, nameof(PdVmWinFormsEventLoop.Wait), StringComparison.Ordinal) &&
+               !string.Equals(descriptor.MemberName, nameof(PdVmWinFormsEventLoop.WaitTimeout), StringComparison.Ordinal);
     }
 
     private PdVmValue InvokeExactMethod(

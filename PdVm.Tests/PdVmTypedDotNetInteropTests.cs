@@ -19,6 +19,39 @@ public sealed class PdVmTypedDotNetInteropTests
     }
 
     [Fact]
+    public void WindowsAdaptersExcludeTaskSpecificUiTypes()
+    {
+        var runtime = typeof(PdVmDotNetHost).Assembly;
+
+        Assert.Null(runtime.GetType("PdVm.Runtime.PdVmWinFormsGrid"));
+        Assert.Null(runtime.GetType("PdVm.Runtime.PdVmWinFormsActionMap"));
+        Assert.Null(runtime.GetType("PdVm.Runtime.PdVmWinFormsPrompt"));
+        Assert.NotNull(runtime.GetType("PdVm.Runtime.PdVmWinFormsScene"));
+        Assert.NotNull(typeof(PdVmWinFormsEventLoop).GetMethod("BindPointer"));
+        Assert.NotNull(typeof(PdVmWinFormsEventLoop).GetMethod("GetPointerX"));
+        Assert.NotNull(typeof(PdVmWinFormsEventLoop).GetMethod("GetPointerY"));
+        Assert.NotNull(typeof(PdVmWinFormsEventLoop).GetMethod("GetPointerButton"));
+    }
+
+    [Fact]
+    public void PointerQueuePreservesTheSnapshotForEveryEvent()
+    {
+        var form = new object();
+        var control = new FakePointerControl();
+        PdVmWinFormsEventLoop.BindPointer(form, control, "surface");
+
+        control.RaiseMouseUp(new FakePointerEventArgs("Left", 11, 12, 1));
+        control.RaiseMouseUp(new FakePointerEventArgs("Left", 31, 32, 1));
+
+        Assert.Equal("surface_up", PdVmWinFormsEventLoop.Wait(form));
+        Assert.Equal(11, PdVmWinFormsEventLoop.GetPointerX(form));
+        Assert.Equal(12, PdVmWinFormsEventLoop.GetPointerY(form));
+        Assert.Equal("surface_up", PdVmWinFormsEventLoop.Wait(form));
+        Assert.Equal(31, PdVmWinFormsEventLoop.GetPointerX(form));
+        Assert.Equal(32, PdVmWinFormsEventLoop.GetPointerY(form));
+    }
+
+    [Fact]
     public void NativeCompilerEmitsReadableVmbcWithoutRunnerProcess()
     {
         using var fixture = new SourceFixture("let answer = 40 + 2;\n");
@@ -238,6 +271,21 @@ public sealed class PdVmTypedDotNetInteropTests
 
     private static PdVmValue ReturnValue(PdVmCallOutcome outcome) =>
         Assert.Single(outcome.ReturnValues.Values);
+
+    private sealed record FakePointerEventArgs(string Button, int X, int Y, int Clicks);
+
+    private sealed class FakePointerControl
+    {
+        public event EventHandler<FakePointerEventArgs>? MouseDown;
+        public event EventHandler<FakePointerEventArgs>? MouseUp;
+        public event EventHandler<FakePointerEventArgs>? MouseDoubleClick;
+        public event EventHandler<FakePointerEventArgs>? MouseLeave;
+
+        public void RaiseMouseDown(FakePointerEventArgs args) => MouseDown?.Invoke(this, args);
+        public void RaiseMouseUp(FakePointerEventArgs args) => MouseUp?.Invoke(this, args);
+        public void RaiseMouseDoubleClick(FakePointerEventArgs args) => MouseDoubleClick?.Invoke(this, args);
+        public void RaiseMouseLeave(FakePointerEventArgs args) => MouseLeave?.Invoke(this, args);
+    }
 
     private sealed class SourceFixture : IDisposable
     {
