@@ -212,14 +212,16 @@ public static class PdEdgeProgramLoader
             return false;
         }
 
-        if (File.Exists(Path.Combine(candidate, "examples", "compile_to_file.rs")))
-        {
-            return true;
-        }
-
-        return Directory.Exists(Path.Combine(candidate, "pd-edge")) &&
-               (Directory.Exists(Path.Combine(candidate, "pd-vm")) ||
-                Directory.Exists(Path.Combine(candidate, "rustscript")));
+        var hasCompilerExample =
+            File.Exists(Path.Combine(candidate, "examples", "compile_to_file.rs"));
+        var isLegacyMonorepo =
+            Directory.Exists(Path.Combine(candidate, "pd-edge")) &&
+            (Directory.Exists(Path.Combine(candidate, "pd-vm")) ||
+             Directory.Exists(Path.Combine(candidate, "rustscript")));
+        var isSplitEdgeWorkspace =
+            Directory.Exists(Path.Combine(candidate, "pd-edge-abi")) &&
+            Directory.Exists(Path.Combine(candidate, "pd-edge-host-function"));
+        return hasCompilerExample || isLegacyMonorepo || isSplitEdgeWorkspace;
     }
 
     private static string? FindPrebuiltCompilerBinary(string workspaceRoot)

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Reflection;
 using System.Runtime.Loader;
 
@@ -13,7 +14,7 @@ public static class PdVmExecution
         while (executedSteps < maxSteps)
         {
             var before = program.ExecutedInstructionCount;
-            var status = program.RunStep(host);
+            var status = program.RunStep(host, maxSteps - executedSteps);
             executedSteps = CheckedAccumulateSteps(executedSteps, program, before, maxSteps);
             switch (status.Kind)
             {
@@ -43,7 +44,7 @@ public static class PdVmExecution
         {
             cancellationToken.ThrowIfCancellationRequested();
             var before = program.ExecutedInstructionCount;
-            var status = program.RunStep(host);
+            var status = program.RunStep(host, maxSteps - executedSteps);
             executedSteps = CheckedAccumulateSteps(executedSteps, program, before, maxSteps);
             switch (status.Kind)
             {
@@ -88,11 +89,50 @@ public static class PdVmExecution
 
 public static class PdVmAssemblyLoader
 {
+    private static readonly ConcurrentDictionary<string, byte> AssemblyDirectories = new(
+        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+    private static int _resolverRegistered;
+
+    public static void RegisterAssemblyDirectory(string assemblyPath)
+    {
+        var directory = Path.GetDirectoryName(Path.GetFullPath(assemblyPath));
+        if (string.IsNullOrWhiteSpace(directory))
+        {
+            return;
+        }
+
+        AssemblyDirectories.TryAdd(directory, 0);
+        if (Interlocked.Exchange(ref _resolverRegistered, 1) == 0)
+        {
+            AssemblyLoadContext.Default.Resolving += ResolveProgramAssembly;
+        }
+    }
+
     public static IPdVmProgram LoadProgram(string assemblyPath)
     {
         var fullPath = Path.GetFullPath(assemblyPath);
+        RegisterAssemblyDirectory(fullPath);
         var assembly = AssemblyLoadContext.Default.LoadFromAssemblyPath(fullPath);
         return CreateProgram(assembly);
+    }
+
+    private static Assembly? ResolveProgramAssembly(AssemblyLoadContext context, AssemblyName assemblyName)
+    {
+        if (string.IsNullOrWhiteSpace(assemblyName.Name))
+        {
+            return null;
+        }
+
+        foreach (var directory in AssemblyDirectories.Keys)
+        {
+            var candidate = Path.Combine(directory, $"{assemblyName.Name}.dll");
+            if (File.Exists(candidate))
+            {
+                return context.LoadFromAssemblyPath(candidate);
+            }
+        }
+
+        return null;
     }
 
     public static IPdVmProgram CreateProgram(Assembly assembly)

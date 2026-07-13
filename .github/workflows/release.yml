@@ -1,0 +1,92 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    name: Package ${{ matrix.rid }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: win-x64
+            rust-target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            archive: zip
+          - rid: osx-arm64
+            rust-target: aarch64-apple-darwin
+            runner: macos-15
+            archive: tar.gz
+          - rid: linux-x64
+            rust-target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            archive: tar.gz
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: rustscript-lang/rustscript
+          path: rustscript
+
+      - uses: actions/checkout@v4
+        with:
+          repository: rustscript-lang/pd-edge
+          path: pd-edge
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-target }}
+
+      - name: Build and test native compiler
+        shell: pwsh
+        run: |
+          cargo build --locked --manifest-path native/pd-vm-compiler/Cargo.toml
+          cargo test --locked --manifest-path native/pd-vm-compiler/Cargo.toml
+
+      - name: Test managed projects
+        shell: pwsh
+        run: dotnet test pd-vm-clr.sln --configuration Release --verbosity minimal
+
+      - name: Build release package
+        shell: pwsh
+        run: ./scripts/package-release.ps1 -RuntimeIdentifier '${{ matrix.rid }}' -RustTarget '${{ matrix.rust-target }}'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pd-vm-clr-${{ matrix.rid }}
+          path: artifacts/release/pd-vm-clr-${{ matrix.rid }}.${{ matrix.archive }}
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+          pattern: pd-vm-clr-*
+          merge-multiple: true
+
+      - name: Create release and upload packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          gh release view "$TAG" --repo "$REPOSITORY" >/dev/null 2>&1 || gh release create "$TAG" --repo "$REPOSITORY" --generate-notes
+          gh release upload "$TAG" release-artifacts/* --repo "$REPOSITORY" --clobber
