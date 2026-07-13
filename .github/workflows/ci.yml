@@ -26,7 +26,12 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '9.0.x'
+          dotnet-version: '10.0.x'
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build native compiler
+        working-directory: rustscript-clr-vm
+        run: cargo build --locked --release --manifest-path native/pd-vm-compiler/Cargo.toml
       - name: Restore
         working-directory: rustscript-clr-vm
         run: dotnet restore pd-vm-clr.sln
@@ -35,4 +40,6 @@ jobs:
         run: dotnet build pd-vm-clr.sln --no-restore --configuration Release
       - name: Tests
         working-directory: rustscript-clr-vm
+        env:
+          PDVM_NATIVE_COMPILER: ${{ github.workspace }}/rustscript-clr-vm/native/pd-vm-compiler/target/release/libpd_vm_compiler.so
         run: dotnet test pd-vm-clr.sln --no-build --configuration Release --verbosity normal
