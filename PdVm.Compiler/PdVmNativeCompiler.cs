@@ -158,7 +158,7 @@ public static class PdVmNativeCompiler
             var directory = new DirectoryInfo(seed);
             while (directory is not null)
             {
-                foreach (var configuration in new[] { "debug", "release" })
+                foreach (var configuration in new[] { "release", "debug" })
                 {
                     foreach (var fileName in fileNames)
                     {
