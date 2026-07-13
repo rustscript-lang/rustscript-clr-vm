@@ -3,22 +3,15 @@ use proxy;
 
 let downstream_version = http::request::get_http_version();
 let request_body_mode = http::request::get_header("x-bench-body-mode");
-let upstream = http::exchange::prepare_default_upstream(
-    "127.0.0.1",
-    18080,
-    "1.1",
-    [
-        "x-downstream-version", downstream_version,
-        "x-bench-program-header", "program-proxy",
-        "x-bench-body-mode", request_body_mode
-    ]
-);
+let upstream = http::exchange::default_upstream();
+http::exchange::set_target(upstream, "127.0.0.1", 18080);
+http::exchange::set_header(upstream, "x-downstream-version", downstream_version);
+http::exchange::set_header(upstream, "x-bench-program-header", "program-proxy");
+http::exchange::set_header(upstream, "x-bench-body-mode", request_body_mode);
 let body = http::request::get_body();
 let downstream = proxy::stream::downstream();
 let upstream_stream = proxy::stream::exchange(upstream);
 proxy::forward_native(downstream, upstream_stream);
-http::response::set_headers([
-    "x-downstream-version", downstream_version,
-    "x-bench-response-header", "program-proxy"
-]);
+http::response::set_header("x-downstream-version", downstream_version);
+http::response::set_header("x-bench-response-header", "program-proxy");
 http::response::set_header("x-request-body", body);

@@ -28,11 +28,9 @@ CLR runtime and compiler support for PD VM bytecode. The repository includes the
 ## Requirements
 
 - .NET 10 SDK
-- Rust toolchain if you want:
-  - `PdEdge.Http --program-source ...`
-  - the Rust HTTP perf harness
+- Rust toolchain only if you want to run the Rust HTTP perf harness
 
-`PdEdge.Http` prefers the prebuilt Rust helper at `target/debug/examples/compile_to_file(.exe)` for source compilation and falls back to `cargo run -p pd-edge --example compile_to_file -- ...` when that binary is not present.
+`PdEdge.Http --program-source ...` compiles RustScript in-process through `PdVm.Compiler`. It does not launch Cargo or require the `pd-edge` Rust workspace at runtime.
 
 ## Build
 
@@ -74,21 +72,15 @@ PdVm.Runner.exe emit-vmbc `
 
 Managed callers can use `PdVmNativeCompiler.CompileFile` or `CompileFileToVmbc` from `PdVm.Compiler.dll`. The packaged native library is named `Pdvm.Compiler.Native.dll` on Windows, `libPdvm.Compiler.Native.dylib` on macOS, and `libPdvm.Compiler.Native.so` on Linux. The native ABI returns VMBC bytes or a UTF-8 diagnostic and releases result buffers through the matching Rust export.
 
-For a PD Edge HTTP proxy script, use the Edge helper so imports are checked against the Edge ABI:
+The same compiler path can produce VMBC for a PD Edge HTTP proxy script:
 
 ```powershell
-cargo run -p pd-edge --example compile_to_file -- `
+PdVm.Runner.exe emit-vmbc `
   path\to\program.rss `
   path\to\program.vmbc
 ```
 
-If `target\debug\examples\compile_to_file.exe` already exists, you can run it directly instead of `cargo run`:
-
-```powershell
-.\target\debug\examples\compile_to_file.exe path\to\program.rss path\to\program.vmbc
-```
-
-Use the Edge path for scripts that will run inside `PdEdge.Http`.
+`PdEdge.Http` validates the compiled host imports against its supported Edge ABI before accepting the program.
 
 Example source files are in `examples/`:
 

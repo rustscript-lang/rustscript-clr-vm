@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using System.Net;
+using System.Net.Sockets;
 using System.Text;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -13,6 +15,86 @@ namespace PdEdge.Http.Tests;
 
 public sealed class PdEdgeHttpServerTests
 {
+    [Fact]
+    public async Task CliProgramSourceCompilesAndServesRequest()
+    {
+        var source = """
+            use http;
+
+            http::response::set_status(200);
+            http::response::set_header("x-method", http::request::get_method());
+            http::response::set_header("x-path", http::request::get_path());
+            http::response::set_header("x-body", http::request::get_body());
+            http::response::set_body("ok");
+            """;
+        var tempRoot = Path.Combine(Path.GetTempPath(), "pd-edge-http-cli-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempRoot);
+        var sourcePath = Path.Combine(tempRoot, "program.rss");
+        await File.WriteAllTextAsync(sourcePath, source, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        var executableName = OperatingSystem.IsWindows()
+            ? "pd-edge-http-minimal-clr.exe"
+            : "pd-edge-http-minimal-clr";
+        var executablePath = Path.Combine(AppContext.BaseDirectory, executableName);
+        Assert.True(File.Exists(executablePath), $"CLI executable was not found: {executablePath}");
+
+        var port = ReserveAvailablePort();
+        using var process = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = executablePath,
+                WorkingDirectory = AppContext.BaseDirectory,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            },
+        };
+        process.StartInfo.ArgumentList.Add("--program-source");
+        process.StartInfo.ArgumentList.Add(sourcePath);
+        process.StartInfo.ArgumentList.Add("--data-addr");
+        process.StartInfo.ArgumentList.Add($"127.0.0.1:{port}");
+        process.StartInfo.ArgumentList.Add("--disable-logging");
+
+        var processStarted = false;
+        try
+        {
+            processStarted = process.Start();
+            Assert.True(processStarted, "CLI process did not start");
+            var stdoutTask = process.StandardOutput.ReadToEndAsync();
+            var stderrTask = process.StandardError.ReadToEndAsync();
+            using var client = new HttpClient
+            {
+                BaseAddress = new Uri($"http://127.0.0.1:{port}"),
+                Timeout = TimeSpan.FromSeconds(1),
+            };
+
+            using var response = await SendWhenReadyAsync(process, client, "/e2e/source?mode=direct", "source-body");
+            if (response is null)
+            {
+                StopProcess(process);
+                var stdout = await stdoutTask;
+                var stderr = await stderrTask;
+                Assert.Fail($"CLI did not serve a request.{Environment.NewLine}stdout:{Environment.NewLine}{stdout}{Environment.NewLine}stderr:{Environment.NewLine}{stderr}");
+            }
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal("POST", response.Headers.GetValues("x-method").Single());
+            Assert.Equal("/e2e/source", response.Headers.GetValues("x-path").Single());
+            Assert.Equal("source-body", response.Headers.GetValues("x-body").Single());
+            Assert.Equal("ok", await response.Content.ReadAsStringAsync());
+        }
+        finally
+        {
+            if (processStarted)
+            {
+                StopProcess(process);
+            }
+            Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
     [Fact]
     public async Task NoProgramReturns404()
     {
@@ -91,11 +173,64 @@ public sealed class PdEdgeHttpServerTests
         var tempRoot = Path.Combine(Path.GetTempPath(), "pd-edge-http-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempRoot);
         var sourcePath = Path.Combine(tempRoot, "program.rss");
-        var vmbcPath = Path.Combine(tempRoot, "program.vmbc");
-        await File.WriteAllTextAsync(sourcePath, source, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-        await PdEdgeProgramLoader.CompileSourceFileToVmbcAsync(sourcePath, vmbcPath);
-        var bytes = await File.ReadAllBytesAsync(vmbcPath);
-        return PdEdgeProgramLoader.LoadFromVmbcBytes(bytes, "PdEdge.Http.Tests");
+        try
+        {
+            await File.WriteAllTextAsync(sourcePath, source, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            return await PdEdgeProgramLoader.LoadFromSourceFileAsync(sourcePath);
+        }
+        finally
+        {
+            Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    private static int ReserveAvailablePort()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        try
+        {
+            return ((IPEndPoint)listener.LocalEndpoint).Port;
+        }
+        finally
+        {
+            listener.Stop();
+        }
+    }
+
+    private static async Task<HttpResponseMessage?> SendWhenReadyAsync(
+        Process process,
+        HttpClient client,
+        string requestUri,
+        string body)
+    {
+        for (var attempt = 0; attempt < 100 && !process.HasExited; attempt++)
+        {
+            try
+            {
+                using var content = new StringContent(body, Encoding.UTF8, "text/plain");
+                return await client.PostAsync(requestUri, content);
+            }
+            catch (HttpRequestException)
+            {
+                await Task.Delay(100);
+            }
+            catch (TaskCanceledException)
+            {
+                await Task.Delay(100);
+            }
+        }
+
+        return null;
+    }
+
+    private static void StopProcess(Process process)
+    {
+        if (!process.HasExited)
+        {
+            process.Kill(entireProcessTree: true);
+            process.WaitForExit();
+        }
     }
 
     private static async Task<PdEdgeHttpServer> StartServerAsync(PdEdgeLoadedProgram? program)

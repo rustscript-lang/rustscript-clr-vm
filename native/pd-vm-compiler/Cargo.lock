@@ -63,9 +63,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
+name = "pd-edge-abi"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e9676d58588b220f7af69d7aa86108042d2acaf21dd24c641a6d9ef3c4e193ba"
+dependencies = [
+ "pd-host-function 0.22.6",
+ "syn",
+]
+
+[[package]]
 name = "pd-host-function"
 version = "0.1.0"
 source = "git+https://github.com/rustscript-lang/rustscript?rev=1f3aaeec911781d3b5ed298754dc2597da38c7b2#1f3aaeec911781d3b5ed298754dc2597da38c7b2"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "pd-host-function"
+version = "0.22.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "91892b3fd45bbd10122fb47f5f8066d3e5583adda28080f650c63d9cb5462e9b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -81,7 +102,8 @@ dependencies = [
  "futures-channel",
  "libc",
  "paste",
- "pd-host-function",
+ "pd-edge-abi",
+ "pd-host-function 0.1.0",
  "regex",
  "rt-format",
  "serde",

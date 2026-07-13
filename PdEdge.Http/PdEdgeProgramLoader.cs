@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Reflection;
 using PdVm.Compiler;
 using PdVm.Runtime;
@@ -41,19 +40,8 @@ public static class PdEdgeProgramLoader
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sourcePath);
-
-        var tempRoot = GetTempWorkRoot();
-        Directory.CreateDirectory(tempRoot);
-        var tempVmbc = Path.Combine(tempRoot, $"{Guid.NewGuid():N}.vmbc");
-        try
-        {
-            await CompileSourceFileToVmbcAsync(sourcePath, tempVmbc, cancellationToken);
-            return await LoadFromVmbcFileAsync(tempVmbc, cancellationToken);
-        }
-        finally
-        {
-            TryDelete(tempVmbc);
-        }
+        var vmbc = await CompileSourceFileAsync(sourcePath, cancellationToken);
+        return LoadFromVmbcBytes(vmbc, Path.GetFileNameWithoutExtension(sourcePath));
     }
 
     public static async Task<PdEdgeLoadedProgram> LoadFromVmbcFileAsync(
@@ -115,55 +103,22 @@ public static class PdEdgeProgramLoader
         ArgumentException.ThrowIfNullOrWhiteSpace(sourcePath);
         ArgumentException.ThrowIfNullOrWhiteSpace(outputPath);
 
-        var workspaceRoot = FindWorkspaceRoot();
-        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath))!);
-        var compilerBinary = FindPrebuiltCompilerBinary(workspaceRoot);
+        var vmbc = await CompileSourceFileAsync(sourcePath, cancellationToken);
+        var fullOutputPath = Path.GetFullPath(outputPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(fullOutputPath)!);
+        await File.WriteAllBytesAsync(fullOutputPath, vmbc, cancellationToken);
+    }
+
+    private static async Task<byte[]> CompileSourceFileAsync(
+        string sourcePath,
+        CancellationToken cancellationToken)
+    {
         var normalizedSourcePath = await NormalizeSourcePathAsync(sourcePath, cancellationToken);
 
         try
         {
-            using var process = new Process
-            {
-                StartInfo = new ProcessStartInfo
-                {
-                    FileName = compilerBinary ?? "cargo",
-                    WorkingDirectory = workspaceRoot,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                },
-            };
-
-            if (compilerBinary is null)
-            {
-                process.StartInfo.ArgumentList.Add("run");
-                process.StartInfo.ArgumentList.Add("--quiet");
-                process.StartInfo.ArgumentList.Add("--package");
-                process.StartInfo.ArgumentList.Add("pd-edge");
-                process.StartInfo.ArgumentList.Add("--example");
-                process.StartInfo.ArgumentList.Add("compile_to_file");
-                process.StartInfo.ArgumentList.Add("--");
-            }
-
-            process.StartInfo.ArgumentList.Add(Path.GetFullPath(normalizedSourcePath));
-            process.StartInfo.ArgumentList.Add(Path.GetFullPath(outputPath));
-
-            if (!process.Start())
-            {
-                throw new InvalidOperationException("failed to start cargo for source compilation");
-            }
-
-            var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-            var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
-            await process.WaitForExitAsync(cancellationToken);
-            var stdout = await stdoutTask;
-            var stderr = await stderrTask;
-            if (process.ExitCode != 0)
-            {
-                throw new InvalidOperationException(
-                    $"source compilation failed with exit code {process.ExitCode}:{Environment.NewLine}{stdout}{stderr}".Trim());
-            }
+            cancellationToken.ThrowIfCancellationRequested();
+            return PdVmNativeCompiler.CompileFile(normalizedSourcePath);
         }
         finally
         {
@@ -172,69 +127,6 @@ public static class PdEdgeProgramLoader
                 TryDelete(normalizedSourcePath);
             }
         }
-    }
-
-    public static string FindWorkspaceRoot()
-    {
-        foreach (var seed in EnumerateSearchSeeds())
-        {
-            var directory = new DirectoryInfo(seed);
-            while (directory is not null)
-            {
-                if (IsWorkspaceRoot(directory.FullName))
-                {
-                    return directory.FullName;
-                }
-
-                var siblingEdgeRoot = Path.Combine(directory.FullName, "pd-edge");
-                if (IsWorkspaceRoot(siblingEdgeRoot))
-                {
-                    return siblingEdgeRoot;
-                }
-
-                directory = directory.Parent;
-            }
-        }
-
-        throw new InvalidOperationException("failed to locate the pd-edge workspace root");
-    }
-
-    private static IEnumerable<string> EnumerateSearchSeeds()
-    {
-        yield return Directory.GetCurrentDirectory();
-        yield return AppContext.BaseDirectory;
-    }
-
-    private static bool IsWorkspaceRoot(string candidate)
-    {
-        if (!File.Exists(Path.Combine(candidate, "Cargo.toml")))
-        {
-            return false;
-        }
-
-        var hasCompilerExample =
-            File.Exists(Path.Combine(candidate, "examples", "compile_to_file.rs"));
-        var isLegacyMonorepo =
-            Directory.Exists(Path.Combine(candidate, "pd-edge")) &&
-            (Directory.Exists(Path.Combine(candidate, "pd-vm")) ||
-             Directory.Exists(Path.Combine(candidate, "rustscript")));
-        var isSplitEdgeWorkspace =
-            Directory.Exists(Path.Combine(candidate, "pd-edge-abi")) &&
-            Directory.Exists(Path.Combine(candidate, "pd-edge-host-function"));
-        return hasCompilerExample || isLegacyMonorepo || isSplitEdgeWorkspace;
-    }
-
-    private static string? FindPrebuiltCompilerBinary(string workspaceRoot)
-    {
-        var fileName = OperatingSystem.IsWindows() ? "compile_to_file.exe" : "compile_to_file";
-        var debugPath = Path.Combine(workspaceRoot, "target", "debug", "examples", fileName);
-        if (File.Exists(debugPath))
-        {
-            return debugPath;
-        }
-
-        var releasePath = Path.Combine(workspaceRoot, "target", "release", "examples", fileName);
-        return File.Exists(releasePath) ? releasePath : null;
     }
 
     private static async Task<string> NormalizeSourcePathAsync(string sourcePath, CancellationToken cancellationToken)
