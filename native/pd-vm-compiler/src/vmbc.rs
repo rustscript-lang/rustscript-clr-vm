@@ -26,6 +26,7 @@ pub fn encode_program(program: &Program) -> Result<Vec<u8>, String> {
             }
             Value::String(value) => {
                 out.push(2);
+                let value = repair_utf8_mojibake(value);
                 write_bytes("constant string", value.as_bytes(), &mut out)?;
             }
             Value::Bytes(value) => {
@@ -212,7 +213,27 @@ fn write_bools(field: &'static str, values: &[bool], out: &mut Vec<u8>) -> Resul
 }
 
 fn write_string(field: &'static str, value: &str, out: &mut Vec<u8>) -> Result<(), String> {
+    let value = repair_utf8_mojibake(value);
     write_bytes(field, value.as_bytes(), out)
+}
+
+fn repair_utf8_mojibake(value: &str) -> std::borrow::Cow<'_, str> {
+    if value.is_ascii() {
+        return std::borrow::Cow::Borrowed(value);
+    }
+
+    let mut bytes = Vec::with_capacity(value.len());
+    for character in value.chars() {
+        let Ok(byte) = u8::try_from(u32::from(character)) else {
+            return std::borrow::Cow::Borrowed(value);
+        };
+        bytes.push(byte);
+    }
+
+    match String::from_utf8(bytes) {
+        Ok(decoded) if decoded != value => std::borrow::Cow::Owned(decoded),
+        _ => std::borrow::Cow::Borrowed(value),
+    }
 }
 
 fn write_bytes(field: &'static str, bytes: &[u8], out: &mut Vec<u8>) -> Result<(), String> {
@@ -222,7 +243,26 @@ fn write_bytes(field: &'static str, bytes: &[u8], out: &mut Vec<u8>) -> Result<(
 }
 
 fn write_count(field: &'static str, count: usize, out: &mut Vec<u8>) -> Result<(), String> {
-    let count = u32::try_from(count).map_err(|_| format!("{field} length is too large: {count}"))?;
+    let count =
+        u32::try_from(count).map_err(|_| format!("{field} length is too large: {count}"))?;
     out.extend_from_slice(&count.to_le_bytes());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::repair_utf8_mojibake;
+
+    #[test]
+    fn repairs_utf8_bytes_expanded_as_latin1_characters() {
+        let mojibake = String::from_iter(['\u{f0}', '\u{9f}', '\u{98}', '\u{b5}']);
+        assert_eq!(repair_utf8_mojibake(&mojibake), "😵");
+    }
+
+    #[test]
+    fn preserves_text_that_is_already_unicode() {
+        assert_eq!(repair_utf8_mojibake("🙂"), "🙂");
+        assert_eq!(repair_utf8_mojibake("é"), "é");
+        assert_eq!(repair_utf8_mojibake("plain ASCII"), "plain ASCII");
+    }
 }

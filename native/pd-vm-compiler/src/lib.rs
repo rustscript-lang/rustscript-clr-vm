@@ -33,8 +33,7 @@ pub extern "C" fn pdvm_compile_file_utf8(
             .map_err(|error| (STATUS_INVALID_ARGUMENT, error.to_string()))?;
         let compiled = vm::compile_source_file(Path::new(path_text))
             .map_err(|error| (STATUS_COMPILE_ERROR, error.to_string()))?;
-        vmbc::encode_program(&compiled.program)
-            .map_err(|error| (STATUS_COMPILE_ERROR, error))
+        vmbc::encode_program(&compiled.program).map_err(|error| (STATUS_COMPILE_ERROR, error))
     });
 
     match result {
@@ -50,7 +49,11 @@ pub extern "C" fn pdvm_compile_file_utf8(
             let message = payload
                 .downcast_ref::<String>()
                 .cloned()
-                .or_else(|| payload.downcast_ref::<&str>().map(|value| (*value).to_owned()))
+                .or_else(|| {
+                    payload
+                        .downcast_ref::<&str>()
+                        .map(|value| (*value).to_owned())
+                })
                 .unwrap_or_else(|| "pd-vm compiler panicked".to_owned());
             write_output(output_ptr, output_len, message.into_bytes());
             STATUS_PANIC
