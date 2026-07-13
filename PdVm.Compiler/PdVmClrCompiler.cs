@@ -60,8 +60,8 @@ public static class PdVmClrCompiler
     private static readonly MethodInfo PopValueMethod =
         GetBaseMethod("PopValue");
 
-    private static readonly MethodInfo SetLocalValueMethod =
-        GetBaseMethod("SetLocalValue", typeof(byte), typeof(PdVmValue));
+    private static readonly MethodInfo GetLocalValuesMethod =
+        GetBaseMethod("GetLocalValues");
 
     private static readonly MethodInfo DispatchCallMethod =
         GetBaseMethod(
@@ -274,16 +274,20 @@ public static class PdVmClrCompiler
             "s_imports",
             typeof(PdVmHostImport[]),
             FieldAttributes.Private | FieldAttributes.Static | FieldAttributes.InitOnly);
-        var localFields = Enumerable.Range(0, program.LocalCount)
-            .Select(index => typeBuilder.DefineField(
-                $"_local{index}",
-                typeof(PdVmValue),
-                FieldAttributes.Private))
-            .ToArray();
+        var localValuesField = typeBuilder.DefineField(
+            "_localValues",
+            typeof(PdVmValue[]),
+            FieldAttributes.Private | FieldAttributes.InitOnly);
 
         EmitTypeInitializer(typeBuilder, constantsField, importsField, program);
-        EmitConstructor(typeBuilder, program.LocalCount, localFields);
-        EmitRunStep(typeBuilder, constantsField, importsField, localFields, program, stackLayout);
+        EmitConstructor(typeBuilder, program.LocalCount, localValuesField);
+        EmitRunStep(
+            typeBuilder,
+            constantsField,
+            importsField,
+            localValuesField,
+            program,
+            stackLayout);
         typeBuilder.CreateType();
         assemblyBuilder.Save(fullOutputPath);
         if (options.CopyRuntimeAssembly)
@@ -377,7 +381,7 @@ public static class PdVmClrCompiler
     private static void EmitConstructor(
         TypeBuilder typeBuilder,
         int localCount,
-        IReadOnlyList<FieldBuilder> localFields)
+        FieldBuilder localValuesField)
     {
         var ctor = typeBuilder.DefineConstructor(
             MethodAttributes.Public,
@@ -387,12 +391,10 @@ public static class PdVmClrCompiler
         il.Emit(OpCodes.Ldarg_0);
         EmitInt32(il, localCount);
         il.Emit(OpCodes.Call, ProgramBaseConstructor);
-        foreach (var localField in localFields)
-        {
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Call, ValueNullMethod);
-            il.Emit(OpCodes.Stfld, localField);
-        }
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, GetLocalValuesMethod);
+        il.Emit(OpCodes.Stfld, localValuesField);
         il.Emit(OpCodes.Ret);
     }
 
@@ -400,7 +402,7 @@ public static class PdVmClrCompiler
         TypeBuilder typeBuilder,
         FieldBuilder constantsField,
         FieldBuilder importsField,
-        IReadOnlyList<FieldBuilder> localFields,
+        FieldBuilder localValuesField,
         PdVmProgramModel program,
         PdVmStackLayout stackLayout)
     {
@@ -473,12 +475,12 @@ public static class PdVmClrCompiler
                 executedInstructionsLocal,
                 evaluationStack,
                 stackDepth,
-                localFields);
+                localValuesField);
             EmitInstruction(
                 il,
                 constantsField,
                 importsField,
-                localFields,
+                localValuesField,
                 program,
                 stackLayout,
                 instruction,
@@ -496,7 +498,7 @@ public static class PdVmClrCompiler
         ILGenerator il,
         FieldBuilder constantsField,
         FieldBuilder importsField,
-        IReadOnlyList<FieldBuilder> localFields,
+        FieldBuilder localValuesField,
         PdVmProgramModel program,
         PdVmStackLayout stackLayout,
         PdVmInstruction instruction,
@@ -539,7 +541,7 @@ public static class PdVmClrCompiler
             case PdVmBytecodeOpCode.Nop:
                 return;
             case PdVmBytecodeOpCode.Ret:
-                EmitPersistExecutionState(il, evaluationStack, stackDepth, localFields);
+                EmitPersistExecutionState(il, evaluationStack, stackDepth);
                 il.Emit(OpCodes.Ldarg_0);
                 EmitInt32(il, instruction.Offset);
                 il.Emit(OpCodes.Call, SetInstructionPointerMethod);
@@ -575,13 +577,17 @@ public static class PdVmClrCompiler
                 return;
             case PdVmBytecodeOpCode.Ldloc:
                 il.Emit(OpCodes.Ldarg_0);
-                il.Emit(OpCodes.Ldfld, localFields[instruction.LocalIndex!.Value]);
+                il.Emit(OpCodes.Ldfld, localValuesField);
+                EmitInt32(il, instruction.LocalIndex!.Value);
+                il.Emit(OpCodes.Ldelem_Ref);
                 il.Emit(OpCodes.Stloc, evaluationStack[stackDepth]);
                 return;
             case PdVmBytecodeOpCode.Stloc:
                 il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Ldfld, localValuesField);
+                EmitInt32(il, instruction.LocalIndex!.Value);
                 il.Emit(OpCodes.Ldloc, evaluationStack[stackDepth - 1]);
-                il.Emit(OpCodes.Stfld, localFields[instruction.LocalIndex!.Value]);
+                il.Emit(OpCodes.Stelem_Ref);
                 return;
             case PdVmBytecodeOpCode.Call:
                 EmitCallInstruction(
@@ -592,7 +598,7 @@ public static class PdVmClrCompiler
                     executedInstructionsLocal,
                     evaluationStack,
                     stackDepth,
-                    localFields);
+                    localValuesField);
                 return;
             default:
                 throw new PdVmCompilerException($"unsupported opcode {instruction.OpCode}");
@@ -911,7 +917,7 @@ public static class PdVmClrCompiler
         LocalBuilder executedInstructionsLocal,
         IReadOnlyList<LocalBuilder> evaluationStack,
         int stackDepth,
-        IReadOnlyList<FieldBuilder> localFields)
+        FieldBuilder localValuesField)
     {
         if (instruction.CallIndex is ushort callIndex &&
             PdVmBuiltins.TryGetBuiltin(callIndex, out var builtin) &&
@@ -933,7 +939,7 @@ public static class PdVmClrCompiler
             return;
         }
 
-        EmitPersistExecutionState(il, evaluationStack, stackDepth, localFields);
+        EmitPersistExecutionState(il, evaluationStack, stackDepth);
         var continueLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
@@ -960,13 +966,13 @@ public static class PdVmClrCompiler
         LocalBuilder executedInstructionsLocal,
         IReadOnlyList<LocalBuilder> evaluationStack,
         int stackDepth,
-        IReadOnlyList<FieldBuilder> localFields)
+        FieldBuilder localValuesField)
     {
         var withinBudget = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, executedInstructionsLocal);
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Blt, withinBudget);
-        EmitPersistExecutionState(il, evaluationStack, stackDepth, localFields);
+        EmitPersistExecutionState(il, evaluationStack, stackDepth);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldloc, executedInstructionsLocal);
         il.Emit(OpCodes.Call, AddExecutedInstructionsMethod);
@@ -982,8 +988,7 @@ public static class PdVmClrCompiler
     private static void EmitPersistExecutionState(
         ILGenerator il,
         IReadOnlyList<LocalBuilder> evaluationStack,
-        int stackDepth,
-        IReadOnlyList<FieldBuilder> localFields)
+        int stackDepth)
     {
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, ResetStackMethod);
@@ -994,14 +999,6 @@ public static class PdVmClrCompiler
             il.Emit(OpCodes.Call, PushValueMethod);
         }
 
-        for (var index = 0; index < localFields.Count; index++)
-        {
-            il.Emit(OpCodes.Ldarg_0);
-            EmitInt32(il, index);
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Ldfld, localFields[index]);
-            il.Emit(OpCodes.Call, SetLocalValueMethod);
-        }
     }
 
     private static void EmitRestoreEvaluationStack(

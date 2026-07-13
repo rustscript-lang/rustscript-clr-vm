@@ -424,6 +424,42 @@ public sealed class PdVmCompilerTests
         Assert.True(program.ExecutedInstructionCount > 13);
     }
 
+    [Fact]
+    public void GeneratedProgramsShareOneRuntimeLocalArray()
+    {
+        var builder = new BytecodeBuilder();
+        for (var index = 0; index < byte.MaxValue; index++)
+        {
+            builder.EmitLdc(0).EmitStloc((byte)index);
+        }
+        var code = builder
+            .EmitLdloc((byte)(byte.MaxValue - 1))
+            .EmitCall(0, 1)
+            .EmitStloc((byte)(byte.MaxValue - 1))
+            .EmitLdloc((byte)(byte.MaxValue - 1))
+            .Emit(PdVmBytecodeOpCode.Ret)
+            .Build();
+
+        var artifact = CompileProgramArtifact(
+            constants: [PdVmValue.FromInt(42)],
+            code: code,
+            imports: [new PdVmHostImport("identity", 1, PdVmValueType.Int)]);
+        var host = new PdVmDelegateHost();
+        host.RegisterValue("identity", args => args[0]);
+
+        var result = PdVmExecution.Run(artifact.Program, host);
+        var generatedFields = artifact.Program.GetType().GetFields(
+            BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
+
+        Assert.Equal(PdVmStatusKind.Halted, result.Status.Kind);
+        Assert.Equal(42, Assert.Single(artifact.Program.Stack).AsInt());
+        Assert.Equal(byte.MaxValue, artifact.Program.Locals.Count);
+        Assert.All(artifact.Program.Locals, value => Assert.Equal(42, value.AsInt()));
+        Assert.Single(generatedFields, field => field.FieldType == typeof(PdVmValue[]));
+        Assert.DoesNotContain(generatedFields, field => field.FieldType == typeof(PdVmValue));
+        Assert.True(new FileInfo(artifact.AssemblyPath).Length < 256 * 1024);
+    }
+
     private static IPdVmProgram CompileProgram(
         IReadOnlyList<PdVmValue> constants,
         byte[] code,

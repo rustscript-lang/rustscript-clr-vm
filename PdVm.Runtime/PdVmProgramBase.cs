@@ -106,6 +106,8 @@ public abstract class PdVmProgramBase : IPdVmProgram
         _locals[index] = value;
     }
 
+    protected PdVmValue[] GetLocalValues() => _locals;
+
     protected bool DispatchCall(
         IPdVmHost host,
         PdVmHostImport[] imports,
