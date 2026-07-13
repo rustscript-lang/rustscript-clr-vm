@@ -258,6 +258,33 @@ public sealed class PdVmTypedDotNetInteropTests
     }
 
     [Fact]
+    public void SourceWrapperCompilesRustScriptMinesweeperWithEmbeddedBitmaps()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var examplePath = Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory,
+            "..", "..", "..", "..",
+            "examples",
+            "dotnet-minesweeper.rss"));
+        using var fixture = new SourceFixture(File.ReadAllText(examplePath));
+
+        var output = PdVmDotNetSourceCompiler.CompileFile(
+            fixture.SourcePath,
+            fixture.OutputPath,
+            new PdVmDotNetSourceCompileOptions
+            {
+                Profile = PdVmDotNetInteropProfile.Common | PdVmDotNetInteropProfile.WindowsForms,
+            });
+
+        Assert.True(File.Exists(output));
+        Assert.True(new FileInfo(output).Length > 0);
+    }
+
+    [Fact]
     public void WinFormsEventsReturnToRustScriptWithoutBlockingTheUiThread()
     {
         if (!OperatingSystem.IsWindows())

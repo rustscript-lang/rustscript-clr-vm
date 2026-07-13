@@ -1,0 +1,1018 @@
+// Windows 98-style Minesweeper.
+// WinForms supplies typed controls and queued mouse events; all game state,
+// mine placement, flood reveal, flagging, timer, win, and loss logic live here.
+use System::Random;
+use System::Diagnostics::MonotonicClock;
+use System::Drawing::Color;
+use System::Drawing::Font;
+use System::Windows::Forms::Form;
+use System::Windows::Forms::Button;
+use System::Windows::Forms::Label;
+use System::Windows::Forms::Panel;
+use System::Windows::Forms::TextBox;
+use System::Windows::Forms::MenuStrip;
+use System::Windows::Forms::ToolStripMenuItem;
+use System::Windows::Forms::ToolStripSeparator;
+use System::Windows::Forms::Control::ControlCollection;
+use System::Windows::Forms::ToolStripItemCollection;
+use System::Windows::EventLoop as Ui;
+use System::Windows::Scene;
+use System::Windows::Visuals;
+use bytes as builtin_bytes;
+
+fn format_counter(value: int) -> string {
+    let mut current = value;
+    if current > 999 {
+        current = 999;
+    }
+    if current < -99 {
+        current = -99;
+    }
+
+    let mut text = "";
+    if current < 0 {
+        let magnitude = 0 - current;
+        if magnitude < 10 {
+            text = "-0" + magnitude;
+        } else {
+            text = "-" + magnitude;
+        }
+    } else {
+        if current < 10 {
+            text = "00" + current;
+        }
+        if current >= 10 && current < 100 {
+            text = "0" + current;
+        }
+        if current >= 100 {
+            text = "" + current;
+        }
+    }
+    text
+}
+
+fn format_best_time(value: int) -> string {
+    let mut text = "--";
+    if value >= 0 {
+        text = format_counter(value);
+    }
+    text
+}
+
+fn new_board_array(size: int) -> [int] {
+    let mut values: [int] = [];
+    let mut index = 0;
+    while index < size {
+        values[values.length] = 0;
+        index = index + 1;
+    }
+    values
+}
+
+fn parse_positive_int(text: string) -> int {
+    let mut value = 0;
+    let mut valid = text.length > 0;
+    let mut index = 0;
+    while index < text.length {
+        let character = text[index:index + 1];
+        let mut digit = -1;
+        if character == "0" { digit = 0; }
+        if character == "1" { digit = 1; }
+        if character == "2" { digit = 2; }
+        if character == "3" { digit = 3; }
+        if character == "4" { digit = 4; }
+        if character == "5" { digit = 5; }
+        if character == "6" { digit = 6; }
+        if character == "7" { digit = 7; }
+        if character == "8" { digit = 8; }
+        if character == "9" { digit = 9; }
+        if digit < 0 || value > 1000000 {
+            valid = false;
+        } else {
+            value = value * 10 + digit;
+        }
+        index = index + 1;
+    }
+    let mut result = -1;
+    if valid {
+        result = value;
+    }
+    result
+}
+
+fn show_custom_fields(owner: int, rows: int, columns: int, mine_total: int) -> [string] {
+    let dialog = Form::NewForm();
+    Form::SetFormText(dialog, "Custom Field");
+    Form::SetFormStartPosition(dialog, "CenterScreen");
+    Form::SetFormFormBorderStyle(dialog, "FixedDialog");
+    Form::SetFormMaximizeBox(dialog, false);
+    Visuals::SetClientSize(dialog, 360, 196);
+    let controls = Form::GetFormControls(dialog);
+
+    let height_label = Label::NewLabel();
+    Label::SetLabelText(height_label, "Height:");
+    Label::SetLabelLeft(height_label, 16);
+    Label::SetLabelTop(height_label, 18);
+    Label::SetLabelWidth(height_label, 118);
+    Label::SetLabelHeight(height_label, 24);
+    ControlCollection::Add(controls, height_label);
+    let height_input = TextBox::NewTextBox();
+    TextBox::SetTextBoxText(height_input, "" + rows);
+    TextBox::SetTextBoxLeft(height_input, 140);
+    TextBox::SetTextBoxTop(height_input, 15);
+    TextBox::SetTextBoxWidth(height_input, 196);
+    TextBox::SetTextBoxHeight(height_input, 28);
+    ControlCollection::Add(controls, height_input);
+
+    let width_label = Label::NewLabel();
+    Label::SetLabelText(width_label, "Width:");
+    Label::SetLabelLeft(width_label, 16);
+    Label::SetLabelTop(width_label, 60);
+    Label::SetLabelWidth(width_label, 118);
+    Label::SetLabelHeight(width_label, 24);
+    ControlCollection::Add(controls, width_label);
+    let width_input = TextBox::NewTextBox();
+    TextBox::SetTextBoxText(width_input, "" + columns);
+    TextBox::SetTextBoxLeft(width_input, 140);
+    TextBox::SetTextBoxTop(width_input, 57);
+    TextBox::SetTextBoxWidth(width_input, 196);
+    TextBox::SetTextBoxHeight(width_input, 28);
+    ControlCollection::Add(controls, width_input);
+
+    let mines_label = Label::NewLabel();
+    Label::SetLabelText(mines_label, "Mines:");
+    Label::SetLabelLeft(mines_label, 16);
+    Label::SetLabelTop(mines_label, 102);
+    Label::SetLabelWidth(mines_label, 118);
+    Label::SetLabelHeight(mines_label, 24);
+    ControlCollection::Add(controls, mines_label);
+    let mines_input = TextBox::NewTextBox();
+    TextBox::SetTextBoxText(mines_input, "" + mine_total);
+    TextBox::SetTextBoxLeft(mines_input, 140);
+    TextBox::SetTextBoxTop(mines_input, 99);
+    TextBox::SetTextBoxWidth(mines_input, 196);
+    TextBox::SetTextBoxHeight(mines_input, 28);
+    ControlCollection::Add(controls, mines_input);
+
+    let ok_button = Button::NewButton();
+    Button::SetButtonText(ok_button, "OK");
+    Button::SetButtonLeft(ok_button, 170);
+    Button::SetButtonTop(ok_button, 146);
+    Button::SetButtonWidth(ok_button, 80);
+    Button::SetButtonHeight(ok_button, 30);
+    ControlCollection::Add(controls, ok_button);
+    let cancel_button = Button::NewButton();
+    Button::SetButtonText(cancel_button, "Cancel");
+    Button::SetButtonLeft(cancel_button, 256);
+    Button::SetButtonTop(cancel_button, 146);
+    Button::SetButtonWidth(cancel_button, 80);
+    Button::SetButtonHeight(cancel_button, 30);
+    ControlCollection::Add(controls, cancel_button);
+
+    Ui::BindClick(dialog, ok_button, "ok");
+    Ui::BindClick(dialog, cancel_button, "cancel");
+    Ui::BindClosing(dialog, "cancel");
+    Visuals::SetControlEnabled(owner, false);
+    Ui::Show(dialog);
+    let result_action = Ui::Wait(dialog);
+    let mut result = ["cancel"];
+    if result_action == "ok" {
+        result = [
+            "ok",
+            TextBox::GetTextBoxText(height_input),
+            TextBox::GetTextBoxText(width_input),
+            TextBox::GetTextBoxText(mines_input)
+        ];
+    }
+    Ui::Close(dialog);
+    Visuals::SetControlEnabled(owner, true);
+    result
+}
+
+fn set_board_nodes(surface: int, rows: int, columns: int) {
+    let count = rows * columns;
+    let mut lefts = new_board_array(count);
+    let mut tops = new_board_array(count);
+    let mut widths = new_board_array(count);
+    let mut heights = new_board_array(count);
+    let mut index = 0;
+    while index < count {
+        lefts[index] = 2 + (index % columns) * 32;
+        tops[index] = 2 + (index / columns) * 32;
+        widths[index] = 32;
+        heights[index] = 32;
+        index = index + 1;
+    }
+    Scene::SetNodes(surface, lefts, tops, widths, heights);
+}
+
+fn board_index_at(x: int, y: int, rows: int, columns: int) -> int {
+    let mut result = -1;
+    let local_x = x - 2;
+    let local_y = y - 2;
+    if local_x >= 0 && local_y >= 0 {
+        let column = local_x / 32;
+        let row = local_y / 32;
+        if row >= 0 && row < rows && column >= 0 && column < columns {
+            result = row * columns + column;
+        }
+    }
+    result
+}
+
+Visuals::SetApplicationVisualStyleState("NoneEnabled");
+
+let classic_gray = Color::FromArgbInt32Int32Int32(192, 192, 192);
+let black = Color::FromArgbInt32Int32Int32(0, 0, 0);
+let counter_red = Color::FromArgbInt32Int32Int32(255, 0, 0);
+let blue = Color::FromArgbInt32Int32Int32(0, 0, 255);
+let green = Color::FromArgbInt32Int32Int32(0, 128, 0);
+let red = Color::FromArgbInt32Int32Int32(255, 0, 0);
+let navy = Color::FromArgbInt32Int32Int32(0, 0, 128);
+let dark_red = Color::FromArgbInt32Int32Int32(128, 0, 0);
+let teal = Color::FromArgbInt32Int32Int32(0, 128, 128);
+let dark_gray = Color::FromArgbInt32Int32Int32(64, 64, 64);
+let ui_font = Font::NewFontStringFloatFontStyle("Tahoma", 14.0, "Regular");
+let tile_font = Font::NewFontStringFloatFontStyle("Tahoma", 14.0, "Bold");
+
+// Cell appearance is RustScript data. The CLR scene renderer only interprets
+// generic border, color, text, and sprite fields.
+let cell_border_styles = [
+    2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2
+];
+let cell_backgrounds = [
+    classic_gray, classic_gray, classic_gray, classic_gray,
+    classic_gray, classic_gray, classic_gray, classic_gray,
+    classic_gray, classic_gray, classic_gray, classic_gray,
+    red, classic_gray, classic_gray
+];
+let cell_border_colors = [
+    dark_gray, dark_gray, dark_gray, dark_gray,
+    dark_gray, dark_gray, dark_gray, dark_gray,
+    dark_gray, dark_gray, dark_gray, dark_gray,
+    dark_gray, dark_gray, dark_gray
+];
+let cell_foregrounds = [
+    black, black, black, blue, green, red, navy,
+    dark_red, teal, black, dark_gray, black, black, black, blue
+];
+let cell_texts = [
+    "", "", "", "1", "2", "3", "4",
+    "5", "6", "7", "8", "", "", "", "?"
+];
+let cell_sprites = [
+    -1, 0, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, 1, 1, 2, -1
+];
+let monochrome_foregrounds = [
+    black, black, black, black, black, black, black, black,
+    black, black, black, black, black, black, black
+];
+
+// The counter uses an embedded 0-9/minus seven-segment PNG sprite sheet.
+let digit_sprite_sheet = builtin_bytes::from_base64("iVBORw0KGgoAAAANSUhEUgAAAPIAAAAmCAYAAAD+x8adAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAUqSURBVHhe7ZFBjuRIDAPrSfv/z/VgysiBNtDssDRw7drIAHhikpLs12uz2Ww2m83/lK/X66sj5hP/vF5fHTGf4D4m5hPMmZhP8E4T8wnuY2I+wZyJ+QRzJuYTzJmYTzBnYj7B/21i/lu4TEfsqnCZjthV4Q4dsavCtx2xq8LbOmJXhTt0xK4K33bErgrfdsSuCt92xK4K33bErgr/cUfsesPhU7GXw6diL+dO9ale3jMVezl3qt176FO9/K9TsfcPXKAjdlW4QEfsqnCHjthV4duO2FXhbR2xq8IdOmJXhW87YleFbztiV4VvO2JXhW87YleF/7gjdr2pA214xXJ1YBz+DU/rNT9hOfMTdudVveYnbB/zE5YzP2G56XfQ3O9hVfQTlvs9rIp+4mm95icsZ37C7ryq1/yE7WN+wnLmJyw3/Q6as8EJy+ngwNN6zU9YzvyE3XlVr/kJ28f8hOXMT1hu+h00Z4MTltPBgaf1mp+wnPkJu/OqXvMTto/5CcuZn7Dc9DtozgYnLKeDA0/rNT9hOfMTdudVveYnbB/zE5YzP2G56XfQnA1OWE4HB57Wa37CcuYn7M6res1P2D7mJyxnfsJy0++gORucsJwODjyt1/yE5cxP2J1X9ZqfsH3MT1jO/ITlpt9BczY4YTkdHHhar/kJy5mfsDuv6jU/YfuYn7Cc+QnLTb+D5mxwwnI6OPC0XvMTljM/YXde1Wt+wvYxP2E58xOWm34HzdnghOV0cOBpveYnLGd+wu68qtf8hO1jfsJy5icsN/0OmrPBCcvp4MDTes1PWM78hN15Va/5CdvH/ITlzE9YbvodTuXWUD42pWUXfH9WZ3v50c6KfYurevmuK/Yt+O6s1p3sW/D9WVkv//NZrX72LbhHV+xb8F1X7FvwrrNaOfb9C368jthV4duO2FXhkR2xq8K3HbGrwrcdsavCtx2xq8K3HbGrwn/cEbsq3KEjdlX4tiN2Vfi2I3a94cea6lO9PGqq3XvoU738r1Oxl3Onunvvm2Xyo5l+LP2Ln2e9PKor9i3q7InYt7hbL991xb4F//NZWS/nd8W+xVXf95LeU4++wXL8GfQT1mt+wvYxP2H73K3X/ITl9r4H017N2eCE5XRwwHrNT9g+5idsn7v1mp+w3N73YNqrORucsJwODliv+Qnbx/yE7XO3XvMTltv7Hkx7NWeDE5bTwQHrNT9h+5ifsH3u1mt+wnJ734Npr+ZscMJyOjhgveYnbB/zE7bP3XrNT1hu73sw7dWcDU5YTgcHrNf8hO1jfsL2uVuv+QnL7X0Ppr2as8EJy+nggPWan7B9zE/YPnfrNT9hub3vwbRXczY4YTkdHLBe8xO2j/kJ2+duveYnLLf3PZj2as4GJyyngwPWa37C9jE/Yfvcrdf8hOX2vgfTXs3Z4ITldHDAes1P2D7mJ2yfu/Wan7Dc3vdg2qs5G5ywnA4OWK/5CdvH/ITtc7de8xOW2/seTHs1x8FTsZeDz8p66XdU57D3px06+qm3o04v33bEXvpTsZf3nZX10p+KvT/t0NFPvX8j9r7h8K7Yt+Dws7Jezu+KfYs6eyL2LXjfWZ3p5Q4dsW/Bd12xb8H7zsp6Ob8r9i2u+r68ryv2veHwqdjL4VOxl3On+lQv75mKvZw71ad6ec9U7OXcqT7Vy3umYu8fuEBH7KpwgY7YVeEOHbGrwrcdsavC2zpiV4U7dMSuCt92xK4Kb+uIXRXu0BG7KnzbEbsqvK0jdm02m81ms/mv+QUPINQMAQS4igAAAABJRU5ErkJggg==");
+
+// Classic 24x24 PNG sprites are embedded directly in this RustScript source.
+let flag_bitmap = builtin_bytes::from_base64("iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABfSURBVEhL7ZFBCgAgCAT7/xv7S1EkxGYebD0EDux1BrGU5JG2FoYEwkIYoMemrCpjBa8BnDdmBhhXHAFF6hILKKJId1BKEwthYiFUPvg3gI+lh1BMC6DQmguUWEs+oQMEUIZSvUqhmAAAAABJRU5ErkJggg==");
+let mine_bitmap = builtin_bytes::from_base64("iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAB4SURBVEhL1Y1BCoAwEAP7/09XKAoyhHRTK+hALttm0trH6Gde4x8Dl0TJ3E29SVzB3dSbRBV4c8noQAhz6Q36KX40QvdAiJdHEvF0gB9HFgYYP7AhFn6uJILlSiJYriSGApcyLKaZogq8uUxxBXdTbzFbJI7/D8QcK94b8+wQRyYAAAAASUVORK5CYII=");
+let wrong_flag_bitmap = builtin_bytes::from_base64("iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAChSURBVEhL7Y5BDoBACAP5/xv9gY/Q7IEEWkAkezFxEi7aTlfkZ8Ipcom/Dr3ckuvBSCWwnRwrL0ZwLOqkUFhHDjgdwqx5VAoVopEqh8IIKtqR6j+KKkigEvw2kSskim4qX6Qv3iFfqIDEO+SLVL5rhITRTUdIpDL8NhkhAUjo35sRKiZlyiQ5BxVMCe8pz2CwkFtB1olpBz3vOu2gZ9L5ADekenb3RkXrUwAAAABJRU5ErkJggg==");
+let smile_bitmap = builtin_bytes::from_base64("iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAC4SURBVFhH7Y5LDsUgCEW7/1W+nfTFgYk9UAShAxNvcibK/VzX0Wa6A5SK4RHSegTevzn0MDCiUDHJjkiVZ0eUlHeiI0rLO5ERohxmEe698wxQzbNg7x3+VXmM4j9ydwYsDajEGvB5ecMa0PT5iP0GDAYR9obl2WPAaBzf+Ed4x1v8vUoYaeaf98ZT3qSGYP0Uo7wxlTdIwHvF45YZ6mW1vCs1Ilve9QhiiQY9DFwRAyOUiuEWRy79AQeB7r1gXOllAAAAAElFTkSuQmCC");
+let dead_bitmap = builtin_bytes::from_base64("iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAADcSURBVFhH7ZBBCsQwDAP7/1fuT1r2EIjHshvHvRQq0KEbeST2OD69TGfBj4rwitsywPN3b94QWFGpmO6OaJV3R5jy1RFRrjrClavvrETlKiMcJHIAdxa5UNmRc/QP0EFGyoHFocys5soDCIzgfFvISZkDguhqrjyA8Pl7zmzmnOTBOOJvyiu5bMBfS5COHxkwQYyZU373ABZG5l3AkEoh2Xv2pjIsnuUgOHTvG5lUDqB+ixxlMe5WBsLvzCpbLR9yoB3vlg+1RnTLhwyIJcq8IXBHBFb8qAjP/GlJFx5mhfXOBwRiAAAAAElFTkSuQmCC");
+let win_bitmap = builtin_bytes::from_base64("iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAC5SURBVFhH7Y5JDsQgDATz/1fOTxJxYEQK29gYDkhpqS7gXq7r02G6AywVwyOk9Qq8f2PoYWBEoWKSHZEqz45YUl6JjqDBRCjwYCoUPHmnSjOkEfJE/Y8FQwohU5R2rBK5O2/ADqwB28sL1oCi7SPOG9AYujANy3PGgNbYvvGP8I63+FPVGWnmn/fGU14khmD9EKO8MJQ3qIP3gsctM9TLbHlVakS2vOoVxBIJehg4IwZGWCqGW3xy6QHyhWvDV7XMJwAAAABJRU5ErkJggg==");
+
+let form = Form::NewForm();
+Form::SetFormText(form, "Minesweeper");
+Form::SetFormStartPosition(form, "CenterScreen");
+Form::SetFormFormBorderStyle(form, "FixedSingle");
+Form::SetFormMaximizeBox(form, false);
+Form::SetFormAutoScaleMode(form, "None");
+Form::SetFormBackColor(form, classic_gray);
+Form::SetFormFont(form, ui_font);
+Visuals::SetClientSize(form, 310, 448);
+let form_controls = Form::GetFormControls(form);
+
+let menu = MenuStrip::NewMenuStrip();
+MenuStrip::SetMenuStripDock(menu, "Top");
+Form::SetFormMainMenuStrip(form, menu);
+let menu_items = MenuStrip::GetMenuStripItems(menu);
+let game_menu = ToolStripMenuItem::NewToolStripMenuItemString("&Game");
+let help_menu = ToolStripMenuItem::NewToolStripMenuItemString("&Help");
+ToolStripItemCollection::AddToolStripItemInstance(menu_items, game_menu);
+ToolStripItemCollection::AddToolStripItemInstance(menu_items, help_menu);
+
+let new_item = ToolStripMenuItem::NewToolStripMenuItemString("&New");
+let pause_item = ToolStripMenuItem::NewToolStripMenuItemString("&Pause");
+let beginner_item = ToolStripMenuItem::NewToolStripMenuItemString("&Beginner");
+let intermediate_item = ToolStripMenuItem::NewToolStripMenuItemString("&Intermediate");
+let expert_item = ToolStripMenuItem::NewToolStripMenuItemString("&Expert");
+let custom_item = ToolStripMenuItem::NewToolStripMenuItemString("&Custom...");
+let marks_item = ToolStripMenuItem::NewToolStripMenuItemString("&Marks (?)");
+let color_item = ToolStripMenuItem::NewToolStripMenuItemString("&Color");
+let best_times_item = ToolStripMenuItem::NewToolStripMenuItemString("Best &Times...");
+let exit_item = ToolStripMenuItem::NewToolStripMenuItemString("E&xit");
+ToolStripMenuItem::SetToolStripMenuItemShortcutKeys(new_item, "F2");
+ToolStripMenuItem::SetToolStripMenuItemShortcutKeys(pause_item, "Control, P");
+ToolStripMenuItem::SetToolStripMenuItemChecked(beginner_item, true);
+ToolStripMenuItem::SetToolStripMenuItemChecked(marks_item, true);
+ToolStripMenuItem::SetToolStripMenuItemChecked(color_item, true);
+let game_items = ToolStripMenuItem::GetToolStripMenuItemDropDownItems(game_menu);
+ToolStripItemCollection::AddToolStripItemInstance(game_items, new_item);
+ToolStripItemCollection::AddToolStripItemInstance(game_items, pause_item);
+ToolStripItemCollection::AddToolStripItemInstance(game_items, ToolStripSeparator::NewToolStripSeparator());
+ToolStripItemCollection::AddToolStripItemInstance(game_items, beginner_item);
+ToolStripItemCollection::AddToolStripItemInstance(game_items, intermediate_item);
+ToolStripItemCollection::AddToolStripItemInstance(game_items, expert_item);
+ToolStripItemCollection::AddToolStripItemInstance(game_items, custom_item);
+ToolStripItemCollection::AddToolStripItemInstance(game_items, ToolStripSeparator::NewToolStripSeparator());
+ToolStripItemCollection::AddToolStripItemInstance(game_items, marks_item);
+ToolStripItemCollection::AddToolStripItemInstance(game_items, color_item);
+ToolStripItemCollection::AddToolStripItemInstance(game_items, best_times_item);
+ToolStripItemCollection::AddToolStripItemInstance(game_items, ToolStripSeparator::NewToolStripSeparator());
+ToolStripItemCollection::AddToolStripItemInstance(game_items, exit_item);
+
+let contents_item = ToolStripMenuItem::NewToolStripMenuItemString("&Contents");
+let about_item = ToolStripMenuItem::NewToolStripMenuItemString("&About Minesweeper...");
+ToolStripMenuItem::SetToolStripMenuItemShortcutKeys(contents_item, "F1");
+let help_items = ToolStripMenuItem::GetToolStripMenuItemDropDownItems(help_menu);
+ToolStripItemCollection::AddToolStripItemInstance(help_items, contents_item);
+ToolStripItemCollection::AddToolStripItemInstance(help_items, ToolStripSeparator::NewToolStripSeparator());
+ToolStripItemCollection::AddToolStripItemInstance(help_items, about_item);
+
+let status_panel = Panel::NewPanel();
+Panel::SetPanelLeft(status_panel, 19);
+Panel::SetPanelTop(status_panel, 40);
+Panel::SetPanelWidth(status_panel, 272);
+Panel::SetPanelHeight(status_panel, 112);
+Panel::SetPanelBackColor(status_panel, classic_gray);
+Panel::SetPanelBorderStyle(status_panel, "Fixed3D");
+let status_controls = Panel::GetPanelControls(status_panel);
+
+let mine_counter = Label::NewLabel();
+Label::SetLabelText(mine_counter, "");
+Label::SetLabelLeft(mine_counter, 14);
+Label::SetLabelTop(mine_counter, 24);
+Label::SetLabelWidth(mine_counter, 86);
+Label::SetLabelHeight(mine_counter, 60);
+Label::SetLabelBackColor(mine_counter, black);
+Label::SetLabelForeColor(mine_counter, counter_red);
+Label::SetLabelTextAlign(mine_counter, "MiddleCenter");
+Label::SetLabelBorderStyle(mine_counter, "Fixed3D");
+ControlCollection::Add(status_controls, mine_counter);
+Visuals::ConfigureSpriteText(mine_counter, digit_sprite_sheet, 22, 38, "0123456789-", "010");
+
+let face = Button::NewButton();
+Button::SetButtonText(face, "");
+Button::SetButtonLeft(face, 106);
+Button::SetButtonTop(face, 22);
+Button::SetButtonWidth(face, 60);
+Button::SetButtonHeight(face, 62);
+Button::SetButtonBackColor(face, classic_gray);
+Button::SetButtonForeColor(face, black);
+Button::SetButtonFlatStyle(face, "Standard");
+Button::SetButtonTabStop(face, false);
+Button::SetButtonUseVisualStyleBackColor(face, false);
+ControlCollection::Add(status_controls, face);
+Visuals::SetControlBitmap(face, smile_bitmap);
+
+let time_counter = Label::NewLabel();
+Label::SetLabelText(time_counter, "");
+Label::SetLabelLeft(time_counter, 172);
+Label::SetLabelTop(time_counter, 24);
+Label::SetLabelWidth(time_counter, 86);
+Label::SetLabelHeight(time_counter, 60);
+Label::SetLabelBackColor(time_counter, black);
+Label::SetLabelForeColor(time_counter, counter_red);
+Label::SetLabelTextAlign(time_counter, "MiddleCenter");
+Label::SetLabelBorderStyle(time_counter, "Fixed3D");
+ControlCollection::Add(status_controls, time_counter);
+Visuals::ConfigureSpriteText(time_counter, digit_sprite_sheet, 22, 38, "0123456789-", "000");
+
+let board_panel = Panel::NewPanel();
+Panel::SetPanelLeft(board_panel, 19);
+Panel::SetPanelTop(board_panel, 164);
+Panel::SetPanelWidth(board_panel, 272);
+Panel::SetPanelHeight(board_panel, 272);
+Panel::SetPanelBackColor(board_panel, classic_gray);
+Panel::SetPanelBorderStyle(board_panel, "Fixed3D");
+let board_surface = Scene::Create(board_panel, tile_font);
+Scene::ConfigureStyles(
+    board_surface,
+    cell_border_styles,
+    cell_backgrounds,
+    cell_border_colors,
+    cell_foregrounds,
+    cell_texts,
+    cell_sprites
+);
+Scene::SetImage(board_surface, 0, flag_bitmap);
+Scene::SetImage(board_surface, 1, mine_bitmap);
+Scene::SetImage(board_surface, 2, wrong_flag_bitmap);
+set_board_nodes(board_surface, 8, 8);
+
+ControlCollection::Add(form_controls, status_panel);
+ControlCollection::Add(form_controls, board_panel);
+ControlCollection::Add(form_controls, menu);
+
+Ui::BindClick(form, face, "new");
+Ui::BindClick(form, new_item, "new");
+Ui::BindClick(form, pause_item, "pause");
+Ui::BindClick(form, beginner_item, "beginner");
+Ui::BindClick(form, intermediate_item, "intermediate");
+Ui::BindClick(form, expert_item, "expert");
+Ui::BindClick(form, custom_item, "custom");
+Ui::BindClick(form, marks_item, "marks");
+Ui::BindClick(form, color_item, "color");
+Ui::BindClick(form, best_times_item, "best_times");
+Ui::BindClick(form, exit_item, "close");
+Ui::BindClick(form, contents_item, "contents");
+Ui::BindClick(form, about_item, "about");
+Ui::BindPointer(form, board_panel, "board");
+Ui::BindClosing(form, "close");
+
+let random = Random::NewRandom();
+let mut rows = 8;
+let mut columns = 8;
+let mut mine_total = 10;
+let mut cell_count = rows * columns;
+let mut difficulty = 0;
+let mut mines = new_board_array(cell_count);
+let mut revealed = new_board_array(cell_count);
+let mut flagged = new_board_array(cell_count);
+let mut display = new_board_array(cell_count);
+
+let mut mines_ready = false;
+let mut active = true;
+let mut started = false;
+let mut paused = false;
+let mut started_at = 0;
+let mut pause_started_at = 0;
+let mut paused_total = 0;
+let mut elapsed = 0;
+let mut flag_count = 0;
+let mut safe_remaining = cell_count - mine_total;
+let mut marks_enabled = true;
+let mut color_enabled = true;
+let mut best_beginner = -1;
+let mut best_intermediate = -1;
+let mut best_expert = -1;
+let mut pressed_index = -1;
+let mut flash_until = 0;
+let mut flash_cells = new_board_array(cell_count);
+
+Ui::Show(form);
+
+while true {
+    let mut action = Ui::WaitTimeout(form, 100);
+    let mut board_changed = false;
+
+    if flash_until > 0 && MonotonicClock::GetMilliseconds() >= flash_until {
+        flash_until = 0;
+        flash_cells = new_board_array(cell_count);
+        board_changed = true;
+    }
+
+    let mut pointer_kind = "";
+    let mut pointer_button = "";
+    let mut pointer_x = -1;
+    let mut pointer_y = -1;
+    if action == "board_down" { pointer_kind = "down"; }
+    if action == "board_up" { pointer_kind = "up"; }
+    if action == "board_double" { pointer_kind = "double"; }
+    if action == "board_leave" { pointer_kind = "leave"; }
+    if pointer_kind != "" && pointer_kind != "leave" {
+        pointer_button = Ui::GetPointerButton(form);
+        pointer_x = Ui::GetPointerX(form);
+        pointer_y = Ui::GetPointerY(form);
+    }
+
+    if active && started && !paused {
+        let measured_elapsed = (MonotonicClock::GetMilliseconds() - started_at - paused_total) / 1000;
+        if measured_elapsed != elapsed {
+            elapsed = measured_elapsed;
+            Visuals::SetSpriteText(time_counter, format_counter(elapsed));
+        }
+    }
+
+    let mut difficulty_changed = false;
+    if action == "beginner" {
+        rows = 8;
+        columns = 8;
+        mine_total = 10;
+        difficulty = 0;
+        difficulty_changed = true;
+    }
+    if action == "intermediate" {
+        rows = 16;
+        columns = 16;
+        mine_total = 40;
+        difficulty = 1;
+        difficulty_changed = true;
+    }
+    if action == "expert" {
+        rows = 16;
+        columns = 30;
+        mine_total = 99;
+        difficulty = 2;
+        difficulty_changed = true;
+    }
+    if action == "custom" {
+        let custom_values = show_custom_fields(form, rows, columns, mine_total);
+        if custom_values[0].copy() == "ok" {
+            let requested_rows = parse_positive_int(custom_values[1].copy());
+            let requested_columns = parse_positive_int(custom_values[2].copy());
+            let requested_mines = parse_positive_int(custom_values[3].copy());
+            if requested_rows < 8 || requested_rows > 24 || requested_columns < 8 || requested_columns > 30 {
+                Visuals::ShowMessage(form, "Height must be from 8 to 24, and width must be from 8 to 30.", "Custom Field");
+            } else {
+                if requested_mines < 1 || requested_mines >= requested_rows * requested_columns {
+                    Visuals::ShowMessage(form, "Mines must be at least 1 and less than the number of squares.", "Custom Field");
+                } else {
+                    rows = requested_rows;
+                    columns = requested_columns;
+                    mine_total = requested_mines;
+                    difficulty = 3;
+                    difficulty_changed = true;
+                }
+            }
+        }
+    }
+    if difficulty_changed {
+        cell_count = rows * columns;
+        let board_width = columns * 32 + 16;
+        let board_height = rows * 32 + 16;
+        Visuals::SetClientSize(form, board_width + 38, board_height + 176);
+        Panel::SetPanelWidth(status_panel, board_width);
+        Panel::SetPanelWidth(board_panel, board_width);
+        Panel::SetPanelHeight(board_panel, board_height);
+        Button::SetButtonLeft(face, (board_width - 60) / 2);
+        Label::SetLabelLeft(time_counter, board_width - 100);
+        set_board_nodes(board_surface, rows, columns);
+        ToolStripMenuItem::SetToolStripMenuItemChecked(beginner_item, difficulty == 0);
+        ToolStripMenuItem::SetToolStripMenuItemChecked(intermediate_item, difficulty == 1);
+        ToolStripMenuItem::SetToolStripMenuItemChecked(expert_item, difficulty == 2);
+        ToolStripMenuItem::SetToolStripMenuItemChecked(custom_item, difficulty == 3);
+        action = "new";
+    }
+
+    if action == "pause" && active && started {
+        if paused {
+            paused = false;
+            paused_total = paused_total + MonotonicClock::GetMilliseconds() - pause_started_at;
+        } else {
+            let pause_now = MonotonicClock::GetMilliseconds();
+            elapsed = (pause_now - started_at - paused_total) / 1000;
+            Visuals::SetSpriteText(time_counter, format_counter(elapsed));
+            paused = true;
+            pause_started_at = pause_now;
+            pressed_index = -1;
+        }
+        ToolStripMenuItem::SetToolStripMenuItemChecked(pause_item, paused);
+        board_changed = true;
+    }
+
+    if action == "marks" {
+        marks_enabled = !marks_enabled;
+        ToolStripMenuItem::SetToolStripMenuItemChecked(marks_item, marks_enabled);
+        if !marks_enabled {
+            let mut mark_index = 0;
+            while mark_index < cell_count {
+                if flagged[mark_index].copy() == 2 {
+                    flagged[mark_index] = 0;
+                    display[mark_index] = 0;
+                    board_changed = true;
+                }
+                mark_index = mark_index + 1;
+            }
+        }
+    }
+
+    if action == "color" {
+        color_enabled = !color_enabled;
+        ToolStripMenuItem::SetToolStripMenuItemChecked(color_item, color_enabled);
+        if color_enabled {
+            Scene::ConfigureStyles(board_surface, cell_border_styles, cell_backgrounds, cell_border_colors, cell_foregrounds, cell_texts, cell_sprites);
+        } else {
+            Scene::ConfigureStyles(board_surface, cell_border_styles, cell_backgrounds, cell_border_colors, monochrome_foregrounds, cell_texts, cell_sprites);
+        }
+        board_changed = true;
+    }
+
+    if action == "best_times" {
+        let beginner_time = format_best_time(best_beginner);
+        let intermediate_time = format_best_time(best_intermediate);
+        let expert_time = format_best_time(best_expert);
+        Visuals::ShowMessage(form, "Beginner: " + beginner_time + " seconds\nIntermediate: " + intermediate_time + " seconds\nExpert: " + expert_time + " seconds", "Best Times");
+    }
+    if action == "contents" {
+        Visuals::ShowMessage(form, "Open every square that does not contain a mine.\nRight-click to place a flag or question mark.\nDouble-click a revealed number to open its remaining neighbors.", "Minesweeper Help");
+    }
+    if action == "about" {
+        Visuals::ShowMessage(form, "Minesweeper\nRustScript game logic running on the CLR VM.", "About Minesweeper");
+    }
+
+    if action == "new" {
+        mines_ready = false;
+        active = true;
+        started = false;
+        paused = false;
+        started_at = 0;
+        pause_started_at = 0;
+        paused_total = 0;
+        elapsed = 0;
+        flag_count = 0;
+        safe_remaining = cell_count - mine_total;
+        mines = new_board_array(cell_count);
+        revealed = new_board_array(cell_count);
+        flagged = new_board_array(cell_count);
+        display = new_board_array(cell_count);
+        flash_cells = new_board_array(cell_count);
+        flash_until = 0;
+        pressed_index = -1;
+        Visuals::SetSpriteText(mine_counter, format_counter(mine_total));
+        Visuals::SetSpriteText(time_counter, "000");
+        Visuals::SetControlBitmap(face, smile_bitmap);
+        ToolStripMenuItem::SetToolStripMenuItemChecked(pause_item, false);
+        board_changed = true;
+    }
+
+    let mut open_index = -1;
+    let mut flag_index = -1;
+    let mut chord_index = -1;
+    if pointer_kind == "down" && pointer_button == "Left" && active && !paused {
+        pressed_index = board_index_at(pointer_x, pointer_y, rows, columns);
+        board_changed = true;
+    }
+    if pointer_kind == "leave" && pressed_index >= 0 {
+        pressed_index = -1;
+        board_changed = true;
+    }
+    if pointer_kind == "up" {
+        let pointer_index = board_index_at(pointer_x, pointer_y, rows, columns);
+        if pointer_button == "Left" && pointer_index == pressed_index {
+            open_index = pointer_index;
+        }
+        if pointer_button == "Right" {
+            flag_index = pointer_index;
+        }
+        if pressed_index >= 0 {
+            pressed_index = -1;
+            board_changed = true;
+        }
+    }
+    if pointer_kind == "double" && pointer_button == "Left" {
+        chord_index = board_index_at(pointer_x, pointer_y, rows, columns);
+    }
+
+    if flag_index >= 0 && active && !paused && revealed[flag_index].copy() == 0 {
+        if flagged[flag_index].copy() == 0 {
+            flagged[flag_index] = 1;
+            flag_count = flag_count + 1;
+            display[flag_index] = 1;
+        } else {
+            if flagged[flag_index].copy() == 1 {
+                flag_count = flag_count - 1;
+                if marks_enabled {
+                    flagged[flag_index] = 2;
+                    display[flag_index] = 14;
+                } else {
+                    flagged[flag_index] = 0;
+                    display[flag_index] = 0;
+                }
+            } else {
+                flagged[flag_index] = 0;
+                display[flag_index] = 0;
+            }
+        }
+        Visuals::SetSpriteText(mine_counter, format_counter(mine_total - flag_count));
+        board_changed = true;
+    }
+
+    if open_index >= 0 && active && !paused && flagged[open_index].copy() != 1 && revealed[open_index].copy() == 0 {
+        if !mines_ready {
+            let mut placed = 0;
+            while placed < mine_total {
+                let position = Random::NextInt32Instance(random, cell_count);
+                if position != open_index && mines[position].copy() == 0 {
+                    mines[position] = 1;
+                    placed = placed + 1;
+                }
+            }
+            mines_ready = true;
+            started = true;
+            started_at = MonotonicClock::GetMilliseconds();
+        }
+
+        if mines[open_index].copy() == 1 {
+            active = false;
+            started = false;
+            Visuals::SetControlBitmap(face, dead_bitmap);
+            board_changed = true;
+            let mut loss_index = 0;
+            while loss_index < cell_count {
+                if mines[loss_index].copy() == 1 {
+                    if loss_index == open_index {
+                        display[loss_index] = 12;
+                    } else {
+                        display[loss_index] = 11;
+                    }
+                }
+                if mines[loss_index].copy() == 0 && flagged[loss_index].copy() == 1 {
+                    display[loss_index] = 13;
+                }
+                loss_index = loss_index + 1;
+            }
+        } else {
+            let mut queue = new_board_array(cell_count);
+            let mut queued = new_board_array(cell_count);
+            queue[0] = open_index;
+            queued[open_index] = 1;
+            let mut queue_index = 0;
+            let mut queue_length = 1;
+            while queue_index < queue_length {
+                let current = queue[queue_index].copy();
+                if revealed[current].copy() == 0 && flagged[current].copy() != 1 && mines[current].copy() == 0 {
+                    revealed[current] = 1;
+                    safe_remaining = safe_remaining - 1;
+                    let current_row = current / columns;
+                    let current_column = current % columns;
+                    let mut count = 0;
+                    let mut count_row_delta = -1;
+                    while count_row_delta <= 1 {
+                        let mut count_column_delta = -1;
+                        while count_column_delta <= 1 {
+                            let count_row = current_row + count_row_delta;
+                            let count_column = current_column + count_column_delta;
+                            if (count_row_delta != 0 || count_column_delta != 0) &&
+                               count_row >= 0 && count_row < rows &&
+                               count_column >= 0 && count_column < columns {
+                                count = count + mines[count_row * columns + count_column].copy();
+                            }
+                            count_column_delta = count_column_delta + 1;
+                        }
+                        count_row_delta = count_row_delta + 1;
+                    }
+
+                    display[current] = 2 + count;
+                    board_changed = true;
+                    if count == 0 {
+                        let mut reveal_row_delta = -1;
+                        while reveal_row_delta <= 1 {
+                            let mut reveal_column_delta = -1;
+                            while reveal_column_delta <= 1 {
+                                let reveal_row = current_row + reveal_row_delta;
+                                let reveal_column = current_column + reveal_column_delta;
+                                if reveal_row >= 0 && reveal_row < rows &&
+                                   reveal_column >= 0 && reveal_column < columns {
+                                    let neighbor = reveal_row * columns + reveal_column;
+                                    if revealed[neighbor].copy() == 0 &&
+                                       flagged[neighbor].copy() != 1 &&
+                                       queued[neighbor].copy() == 0 {
+                                        queue[queue_length] = neighbor;
+                                        queued[neighbor] = 1;
+                                        queue_length = queue_length + 1;
+                                    }
+                                }
+                                reveal_column_delta = reveal_column_delta + 1;
+                            }
+                            reveal_row_delta = reveal_row_delta + 1;
+                        }
+                    }
+                }
+                queue_index = queue_index + 1;
+            }
+
+            if safe_remaining == 0 {
+                elapsed = (MonotonicClock::GetMilliseconds() - started_at - paused_total) / 1000;
+                active = false;
+                started = false;
+                flag_count = mine_total;
+                Visuals::SetSpriteText(mine_counter, "000");
+                Visuals::SetSpriteText(time_counter, format_counter(elapsed));
+                Visuals::SetControlBitmap(face, win_bitmap);
+                if difficulty == 0 && (best_beginner < 0 || elapsed < best_beginner) {
+                    best_beginner = elapsed;
+                }
+                if difficulty == 1 && (best_intermediate < 0 || elapsed < best_intermediate) {
+                    best_intermediate = elapsed;
+                }
+                if difficulty == 2 && (best_expert < 0 || elapsed < best_expert) {
+                    best_expert = elapsed;
+                }
+                let mut win_index = 0;
+                while win_index < cell_count {
+                    if mines[win_index].copy() == 1 {
+                        flagged[win_index] = 1;
+                        display[win_index] = 1;
+                    }
+                    win_index = win_index + 1;
+                }
+                board_changed = true;
+            }
+        }
+    }
+
+    // Classic chord action: double-click a revealed number to open every
+    // unflagged neighbor when the adjacent flag count matches the number.
+    if chord_index >= 0 && active && !paused && revealed[chord_index].copy() == 1 {
+        let chord_number = display[chord_index].copy() - 2;
+        if chord_number >= 0 && chord_number <= 8 {
+            let chord_row = chord_index / columns;
+            let chord_column = chord_index % columns;
+            let mut adjacent_flags = 0;
+            flash_cells = new_board_array(cell_count);
+            let mut flash_count = 0;
+            let mut chord_row_delta = -1;
+            while chord_row_delta <= 1 {
+                let mut chord_column_delta = -1;
+                while chord_column_delta <= 1 {
+                    let neighbor_row = chord_row + chord_row_delta;
+                    let neighbor_column = chord_column + chord_column_delta;
+                    if (chord_row_delta != 0 || chord_column_delta != 0) &&
+                       neighbor_row >= 0 && neighbor_row < rows &&
+                       neighbor_column >= 0 && neighbor_column < columns {
+                        let neighbor = neighbor_row * columns + neighbor_column;
+                        if flagged[neighbor].copy() == 1 {
+                            adjacent_flags = adjacent_flags + 1;
+                        }
+                        if revealed[neighbor].copy() == 0 && flagged[neighbor].copy() != 1 {
+                            flash_cells[neighbor] = 1;
+                            flash_count = flash_count + 1;
+                        }
+                    }
+                    chord_column_delta = chord_column_delta + 1;
+                }
+                chord_row_delta = chord_row_delta + 1;
+            }
+
+            if flash_count > 0 && adjacent_flags != chord_number {
+                flash_until = MonotonicClock::GetMilliseconds() + 140;
+                board_changed = true;
+            }
+
+            if flash_count > 0 && adjacent_flags == chord_number {
+                let mut queue = new_board_array(cell_count);
+                let mut queued = new_board_array(cell_count);
+                let mut queue_length = 0;
+                let mut chord_mine = -1;
+                let mut seed_row_delta = -1;
+                while seed_row_delta <= 1 {
+                    let mut seed_column_delta = -1;
+                    while seed_column_delta <= 1 {
+                        let seed_row = chord_row + seed_row_delta;
+                        let seed_column = chord_column + seed_column_delta;
+                        if (seed_row_delta != 0 || seed_column_delta != 0) &&
+                           seed_row >= 0 && seed_row < rows &&
+                           seed_column >= 0 && seed_column < columns {
+                            let seed = seed_row * columns + seed_column;
+                            if revealed[seed].copy() == 0 && flagged[seed].copy() != 1 {
+                                if mines[seed].copy() == 1 {
+                                    if chord_mine < 0 {
+                                        chord_mine = seed;
+                                    }
+                                } else {
+                                    queue[queue_length] = seed;
+                                    queued[seed] = 1;
+                                    queue_length = queue_length + 1;
+                                }
+                            }
+                        }
+                        seed_column_delta = seed_column_delta + 1;
+                    }
+                    seed_row_delta = seed_row_delta + 1;
+                }
+
+                if chord_mine >= 0 {
+                    active = false;
+                    started = false;
+                    Visuals::SetControlBitmap(face, dead_bitmap);
+                    board_changed = true;
+                    let mut loss_index = 0;
+                    while loss_index < cell_count {
+                        if mines[loss_index].copy() == 1 {
+                            if loss_index == chord_mine {
+                                display[loss_index] = 12;
+                            } else {
+                                display[loss_index] = 11;
+                            }
+                        }
+                        if mines[loss_index].copy() == 0 && flagged[loss_index].copy() == 1 {
+                            display[loss_index] = 13;
+                        }
+                        loss_index = loss_index + 1;
+                    }
+                } else {
+                    let mut queue_index = 0;
+                    while queue_index < queue_length {
+                        let current = queue[queue_index].copy();
+                        if revealed[current].copy() == 0 &&
+                           flagged[current].copy() != 1 &&
+                           mines[current].copy() == 0 {
+                            revealed[current] = 1;
+                            safe_remaining = safe_remaining - 1;
+                            let current_row = current / columns;
+                            let current_column = current % columns;
+                            let mut count = 0;
+                            let mut count_row_delta = -1;
+                            while count_row_delta <= 1 {
+                                let mut count_column_delta = -1;
+                                while count_column_delta <= 1 {
+                                    let count_row = current_row + count_row_delta;
+                                    let count_column = current_column + count_column_delta;
+                                    if (count_row_delta != 0 || count_column_delta != 0) &&
+                                       count_row >= 0 && count_row < rows &&
+                                       count_column >= 0 && count_column < columns {
+                                        count = count + mines[count_row * columns + count_column].copy();
+                                    }
+                                    count_column_delta = count_column_delta + 1;
+                                }
+                                count_row_delta = count_row_delta + 1;
+                            }
+
+                            display[current] = 2 + count;
+                            board_changed = true;
+                            if count == 0 {
+                                let mut reveal_row_delta = -1;
+                                while reveal_row_delta <= 1 {
+                                    let mut reveal_column_delta = -1;
+                                    while reveal_column_delta <= 1 {
+                                        let reveal_row = current_row + reveal_row_delta;
+                                        let reveal_column = current_column + reveal_column_delta;
+                                        if reveal_row >= 0 && reveal_row < rows &&
+                                           reveal_column >= 0 && reveal_column < columns {
+                                            let neighbor = reveal_row * columns + reveal_column;
+                                            if revealed[neighbor].copy() == 0 &&
+                                               flagged[neighbor].copy() != 1 &&
+                                               queued[neighbor].copy() == 0 {
+                                                queue[queue_length] = neighbor;
+                                                queued[neighbor] = 1;
+                                                queue_length = queue_length + 1;
+                                            }
+                                        }
+                                        reveal_column_delta = reveal_column_delta + 1;
+                                    }
+                                    reveal_row_delta = reveal_row_delta + 1;
+                                }
+                            }
+                        }
+                        queue_index = queue_index + 1;
+                    }
+
+                    if safe_remaining == 0 {
+                        elapsed = (MonotonicClock::GetMilliseconds() - started_at - paused_total) / 1000;
+                        active = false;
+                        started = false;
+                        flag_count = mine_total;
+                        Visuals::SetSpriteText(mine_counter, "000");
+                        Visuals::SetSpriteText(time_counter, format_counter(elapsed));
+                        Visuals::SetControlBitmap(face, win_bitmap);
+                        if difficulty == 0 && (best_beginner < 0 || elapsed < best_beginner) {
+                            best_beginner = elapsed;
+                        }
+                        if difficulty == 1 && (best_intermediate < 0 || elapsed < best_intermediate) {
+                            best_intermediate = elapsed;
+                        }
+                        if difficulty == 2 && (best_expert < 0 || elapsed < best_expert) {
+                            best_expert = elapsed;
+                        }
+                        let mut win_index = 0;
+                        while win_index < cell_count {
+                            if mines[win_index].copy() == 1 {
+                                flagged[win_index] = 1;
+                                display[win_index] = 1;
+                            }
+                            win_index = win_index + 1;
+                        }
+                        board_changed = true;
+                    }
+                }
+            }
+        }
+    }
+
+    if board_changed {
+        let mut render_styles = new_board_array(cell_count);
+        let mut render_index = 0;
+        while render_index < cell_count {
+            let mut render_style = display[render_index].copy();
+            if paused {
+                render_style = 0;
+            }
+            if flash_until > 0 && flash_cells[render_index].copy() == 1 {
+                render_style = 2;
+            }
+            if render_index == pressed_index && render_style == 0 {
+                render_style = 2;
+            }
+            render_styles[render_index] = render_style;
+            render_index = render_index + 1;
+        }
+        render_styles = Scene::Present(board_surface, render_styles);
+    }
+
+    if action == "close" {
+        Ui::Close(form);
+        break;
+    }
+}
+
+Random::ReleaseRandom(random);
