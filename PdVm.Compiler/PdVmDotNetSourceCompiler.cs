@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Reflection;
 using System.Runtime.Loader;
 using System.Security.Cryptography;
@@ -28,6 +29,8 @@ public sealed class PdVmDotNetSourceCompileOptions
 
 public static class PdVmDotNetSourceCompiler
 {
+    private static readonly ConcurrentDictionary<Type, Binding[]> MetadataBindingCache = new();
+
     private sealed record Parameter(string Name, string Schema);
 
     private sealed record Binding(
@@ -40,7 +43,11 @@ public static class PdVmDotNetSourceCompiler
         Parameter[] Parameters,
         string ReturnSchema);
 
-    private sealed record SystemImport(string SourcePath, int Line, string Path)
+    private sealed record SystemImport(
+        string SourcePath,
+        int Line,
+        string Path,
+        MemberUse[] UsedMembers)
     {
         public string TypeName => Path.Replace("::", ".", StringComparison.Ordinal);
 
@@ -49,10 +56,12 @@ public static class PdVmDotNetSourceCompiler
         public string DisplayLocation => $"{SourcePath}:{Line}";
     }
 
+    private sealed record MemberUse(string Name, int Line);
+
     private sealed record ResolvedSystemImport(SystemImport Import, Type Type, bool IsExternal);
 
     private static readonly Regex SystemUsePattern = new(
-        @"^\s*use\s+(?<path>System(?:::[A-Za-z_][A-Za-z0-9_]*)+)(?:\s+as\s+[A-Za-z_][A-Za-z0-9_]*)?\s*;",
+        @"^\s*use\s+(?<path>System(?:::[A-Za-z_][A-Za-z0-9_]*)+)(?:\s+as\s+(?<alias>[A-Za-z_][A-Za-z0-9_]*))?\s*;",
         RegexOptions.Multiline | RegexOptions.CultureInvariant);
     private static readonly Regex UsePattern = new(
         @"^\s*use\s+(?<path>[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*)(?:\s+as\s+[A-Za-z_][A-Za-z0-9_]*)?\s*;",
@@ -79,8 +88,7 @@ public static class PdVmDotNetSourceCompiler
         var systemImports = ScanSystemImports(sourceRoot, fullSourcePath);
         var resolvedImports = ResolveSystemImports(
             systemImports,
-            sourceRoot,
-            options.Profile);
+            sourceRoot);
 
         var temporaryRoot = Path.Combine(
             Path.GetTempPath(),
@@ -90,7 +98,7 @@ public static class PdVmDotNetSourceCompiler
         try
         {
             CopySourceOverlay(sourceRoot, temporaryRoot);
-            var bindings = BuildBindings(options.Profile, resolvedImports);
+            var bindings = BuildBindings(resolvedImports);
             var importMap = WriteBindingModules(temporaryRoot, bindings);
             var relativeSource = Path.GetRelativePath(sourceRoot, fullSourcePath);
             var overlaySource = Path.Combine(temporaryRoot, relativeSource);
@@ -112,44 +120,15 @@ public static class PdVmDotNetSourceCompiler
         }
     }
 
-    internal static IReadOnlyDictionary<string, string> GenerateModules(
-        string outputRoot,
-        PdVmDotNetInteropProfile profile)
-    {
-        Directory.CreateDirectory(outputRoot);
-        return WriteBindingModules(outputRoot, BuildBindings(profile, []))
-            .ToDictionary(pair => pair.Key, pair => pair.Value.EncodeImportName(), StringComparer.Ordinal);
-    }
-
     private static IReadOnlyList<Binding> BuildBindings(
-        PdVmDotNetInteropProfile profile,
         IReadOnlyList<ResolvedSystemImport> resolvedImports)
     {
         var bindings = new List<Binding>();
-        if (profile.HasFlag(PdVmDotNetInteropProfile.Common))
-        {
-            bindings.AddRange(BuildCommonBindings());
-        }
-        if (profile.HasFlag(PdVmDotNetInteropProfile.WindowsForms))
-        {
-            if (!OperatingSystem.IsWindows())
-            {
-                throw new PlatformNotSupportedException("Windows Forms interop requires Windows");
-            }
-            bindings.AddRange(BuildWindowsFormsBindings());
-        }
-
-        foreach (var resolved in resolvedImports
+        foreach (var group in resolvedImports
                      .GroupBy(item => item.Import.ModulePath, StringComparer.Ordinal)
-                     .Select(group => group.First())
-                     .OrderBy(item => item.Import.ModulePath, StringComparer.Ordinal))
+                     .OrderBy(item => item.Key, StringComparer.Ordinal))
         {
-            if (bindings.Any(binding =>
-                    string.Equals(binding.ModulePath, resolved.Import.ModulePath, StringComparison.Ordinal)))
-            {
-                continue;
-            }
-
+            var resolved = group.First();
             var generated = BuildMetadataBindings(resolved.Import.ModulePath, resolved.Type).ToArray();
             if (generated.Length == 0)
             {
@@ -157,140 +136,35 @@ public static class PdVmDotNetSourceCompiler
                     $"CLR import '{resolved.Import.Path}' at {resolved.Import.DisplayLocation} exposes no supported public members. " +
                     "Members with generic, ref, pointer, or byref-like parameters are not available to RustScript.");
             }
-            bindings.AddRange(generated);
+            var requestedNames = group
+                .SelectMany(item => item.Import.UsedMembers)
+                .Select(member => member.Name)
+                .ToHashSet(StringComparer.Ordinal);
+            if (requestedNames.Count == 0)
+            {
+                bindings.AddRange(generated);
+                continue;
+            }
+            var selected = generated
+                .Where(binding => requestedNames.Contains(binding.PublicName))
+                .ToArray();
+            var missingNames = requestedNames
+                .Except(selected.Select(binding => binding.PublicName), StringComparer.Ordinal)
+                .Order(StringComparer.Ordinal)
+                .ToArray();
+            if (missingNames.Length != 0)
+            {
+                var missing = group
+                    .SelectMany(item => item.Import.UsedMembers.Select(member => (item.Import, Member: member)))
+                    .First(item => missingNames.Contains(item.Member.Name, StringComparer.Ordinal));
+                throw new PdVmCompilerException(
+                    $"CLR metadata call at {missing.Import.SourcePath}:{missing.Member.Line}: type '{resolved.Type.FullName}' " +
+                    $"has no supported metadata member named {string.Join(", ", missingNames.Select(name => $"'{name}'"))}. " +
+                    "Use the generated overload suffix when a CLR member has multiple supported signatures.");
+            }
+            bindings.AddRange(selected);
         }
         return bindings;
-    }
-
-    private static IEnumerable<Binding> BuildCommonBindings()
-    {
-        yield return Static("System/Console.rss", "WriteLine", typeof(Console), nameof(Console.WriteLine), [typeof(string)], [("value", "string")], "null");
-        yield return Static("System/Console.rss", "WriteLineInt", typeof(Console), nameof(Console.WriteLine), [typeof(long)], [("value", "int")], "null");
-        yield return Static("System/Math.rss", "Sqrt", typeof(Math), nameof(Math.Sqrt), [typeof(double)], [("value", "float")], "float");
-        yield return Static("System/Math.rss", "AbsInt", typeof(Math), nameof(Math.Abs), [typeof(long)], [("value", "int")], "int");
-        yield return Static("System/Math.rss", "AbsFloat", typeof(Math), nameof(Math.Abs), [typeof(double)], [("value", "float")], "float");
-        yield return Static("System/IO/Path.rss", "GetFileName", typeof(Path), nameof(Path.GetFileName), [typeof(string)], [("path", "string")], "string");
-        yield return Static("System/IO/Path.rss", "Combine", typeof(Path), nameof(Path.Combine), [typeof(string), typeof(string)], [("left", "string"), ("right", "string")], "string");
-        yield return Static("System/IO/File.rss", "Exists", typeof(File), nameof(File.Exists), [typeof(string)], [("path", "string")], "bool");
-        yield return Static("System/IO/File.rss", "ReadAllText", typeof(File), nameof(File.ReadAllText), [typeof(string)], [("path", "string")], "string");
-        yield return Static("System/IO/File.rss", "WriteAllText", typeof(File), nameof(File.WriteAllText), [typeof(string), typeof(string)], [("path", "string"), ("content", "string")], "null");
-
-        var stringBuilder = typeof(StringBuilder);
-        yield return Constructor("System/Text/StringBuilder.rss", "New", stringBuilder, [], [], "int");
-        yield return Instance("System/Text/StringBuilder.rss", "Append", stringBuilder, nameof(StringBuilder.Append), [typeof(string)], [("handle", "int"), ("value", "string")], "int");
-        yield return Instance("System/Text/StringBuilder.rss", "ToString", stringBuilder, nameof(StringBuilder.ToString), [], [("handle", "int")], "string");
-        yield return PropertyGet("System/Text/StringBuilder.rss", "GetLength", stringBuilder, nameof(StringBuilder.Length), [("handle", "int")], "int");
-        yield return Release("System/Text/StringBuilder.rss", "Release", stringBuilder);
-    }
-
-    private static IEnumerable<Binding> BuildWindowsFormsBindings()
-    {
-        var host = new PdVmDotNetHost(allowDynamicSystemCalls: true);
-        var form = ResolveLoadedType(host, "System.Windows.Forms.Form");
-        var richTextBox = ResolveLoadedType(host, "System.Windows.Forms.RichTextBox");
-        var menuStrip = ResolveLoadedType(host, "System.Windows.Forms.MenuStrip");
-        var menuItem = ResolveLoadedType(host, "System.Windows.Forms.ToolStripMenuItem");
-        var separator = ResolveLoadedType(host, "System.Windows.Forms.ToolStripSeparator");
-        var statusStrip = ResolveLoadedType(host, "System.Windows.Forms.StatusStrip");
-        var statusLabel = ResolveLoadedType(host, "System.Windows.Forms.ToolStripStatusLabel");
-        var control = ResolveLoadedType(host, "System.Windows.Forms.Control");
-        var controlCollection = ResolveLoadedType(host, "System.Windows.Forms.Control+ControlCollection");
-        var itemCollection = ResolveLoadedType(host, "System.Windows.Forms.ToolStripItemCollection");
-        var toolStripItem = ResolveLoadedType(host, "System.Windows.Forms.ToolStripItem");
-        var openDialog = ResolveLoadedType(host, "System.Windows.Forms.OpenFileDialog");
-        var saveDialog = ResolveLoadedType(host, "System.Windows.Forms.SaveFileDialog");
-        var fontDialog = ResolveLoadedType(host, "System.Windows.Forms.FontDialog");
-        var colorDialog = ResolveLoadedType(host, "System.Windows.Forms.ColorDialog");
-        var window = ResolveLoadedType(host, "System.Windows.Forms.IWin32Window");
-
-        yield return Constructor("System/Windows/Forms/Form.rss", "NewForm", form, [], [], "int");
-        yield return PropertySet("System/Windows/Forms/Form.rss", "SetFormText", form, "Text", [("handle", "int"), ("value", "string")]);
-        yield return PropertySet("System/Windows/Forms/Form.rss", "SetFormWidth", form, "Width", [("handle", "int"), ("value", "int")]);
-        yield return PropertySet("System/Windows/Forms/Form.rss", "SetFormHeight", form, "Height", [("handle", "int"), ("value", "int")]);
-        yield return PropertySet("System/Windows/Forms/Form.rss", "SetFormStartPosition", form, "StartPosition", [("handle", "int"), ("value", "string")]);
-        yield return PropertySet("System/Windows/Forms/Form.rss", "SetFormMainMenuStrip", form, "MainMenuStrip", [("handle", "int"), ("menu", "int")]);
-        yield return PropertyGet("System/Windows/Forms/Form.rss", "GetFormControls", form, "Controls", [("handle", "int")], "int");
-        yield return Instance("System/Windows/Forms/Form.rss", "ShowForm", form, "Show", [], [("handle", "int")], "null");
-        yield return Release("System/Windows/Forms/Form.rss", "ReleaseForm", form);
-
-        yield return Constructor("System/Windows/Forms/RichTextBox.rss", "NewRichTextBox", richTextBox, [], [], "int");
-        yield return PropertySet("System/Windows/Forms/RichTextBox.rss", "SetRichTextBoxText", richTextBox, "Text", [("handle", "int"), ("value", "string")]);
-        yield return PropertyGet("System/Windows/Forms/RichTextBox.rss", "GetRichTextBoxText", richTextBox, "Text", [("handle", "int")], "string");
-        yield return PropertySet("System/Windows/Forms/RichTextBox.rss", "SetRichTextBoxDock", richTextBox, "Dock", [("handle", "int"), ("value", "string")]);
-        yield return PropertySet("System/Windows/Forms/RichTextBox.rss", "SetRichTextBoxBorderStyle", richTextBox, "BorderStyle", [("handle", "int"), ("value", "string")]);
-        yield return PropertySet("System/Windows/Forms/RichTextBox.rss", "SetRichTextBoxWordWrap", richTextBox, "WordWrap", [("handle", "int"), ("value", "bool")]);
-        yield return PropertySet("System/Windows/Forms/RichTextBox.rss", "SetRichTextBoxFont", richTextBox, "Font", [("handle", "int"), ("font", "int")]);
-        yield return PropertySet("System/Windows/Forms/RichTextBox.rss", "SetRichTextBoxForeColor", richTextBox, "ForeColor", [("handle", "int"), ("color", "int")]);
-        yield return Release("System/Windows/Forms/RichTextBox.rss", "ReleaseRichTextBox", richTextBox);
-
-        yield return Constructor("System/Windows/Forms/MenuStrip.rss", "NewMenuStrip", menuStrip, [], [], "int");
-        yield return PropertySet("System/Windows/Forms/MenuStrip.rss", "SetMenuStripDock", menuStrip, "Dock", [("handle", "int"), ("value", "string")]);
-        yield return PropertyGet("System/Windows/Forms/MenuStrip.rss", "GetMenuStripItems", menuStrip, "Items", [("handle", "int")], "int");
-        yield return Release("System/Windows/Forms/MenuStrip.rss", "ReleaseMenuStrip", menuStrip);
-
-        yield return Constructor("System/Windows/Forms/ToolStripMenuItem.rss", "NewToolStripMenuItem", menuItem, [typeof(string)], [("text", "string")], "int");
-        yield return PropertySet("System/Windows/Forms/ToolStripMenuItem.rss", "SetToolStripMenuItemShortcutKeys", menuItem, "ShortcutKeys", [("handle", "int"), ("value", "string")]);
-        yield return PropertySet("System/Windows/Forms/ToolStripMenuItem.rss", "SetToolStripMenuItemChecked", menuItem, "Checked", [("handle", "int"), ("value", "bool")]);
-        yield return Instance("System/Windows/Forms/ToolStripMenuItem.rss", "PerformToolStripMenuItemClick", menuItem, "PerformClick", [], [("handle", "int")], "null");
-        yield return PropertyGet("System/Windows/Forms/ToolStripMenuItem.rss", "GetToolStripMenuItemItems", menuItem, "DropDownItems", [("handle", "int")], "int");
-        yield return Release("System/Windows/Forms/ToolStripMenuItem.rss", "ReleaseToolStripMenuItem", menuItem);
-
-        yield return Constructor("System/Windows/Forms/ToolStripSeparator.rss", "NewToolStripSeparator", separator, [], [], "int");
-        yield return Release("System/Windows/Forms/ToolStripSeparator.rss", "ReleaseToolStripSeparator", separator);
-
-        yield return Constructor("System/Windows/Forms/StatusStrip.rss", "NewStatusStrip", statusStrip, [], [], "int");
-        yield return PropertySet("System/Windows/Forms/StatusStrip.rss", "SetStatusStripDock", statusStrip, "Dock", [("handle", "int"), ("value", "string")]);
-        yield return PropertyGet("System/Windows/Forms/StatusStrip.rss", "GetStatusStripItems", statusStrip, "Items", [("handle", "int")], "int");
-        yield return Release("System/Windows/Forms/StatusStrip.rss", "ReleaseStatusStrip", statusStrip);
-
-        yield return Constructor("System/Windows/Forms/ToolStripStatusLabel.rss", "NewToolStripStatusLabel", statusLabel, [], [], "int");
-        yield return PropertySet("System/Windows/Forms/ToolStripStatusLabel.rss", "SetToolStripStatusLabelText", statusLabel, "Text", [("handle", "int"), ("value", "string")]);
-        yield return PropertySet("System/Windows/Forms/ToolStripStatusLabel.rss", "SetToolStripStatusLabelSpring", statusLabel, "Spring", [("handle", "int"), ("value", "bool")]);
-        yield return Release("System/Windows/Forms/ToolStripStatusLabel.rss", "ReleaseToolStripStatusLabel", statusLabel);
-
-        yield return Instance("System/Windows/Forms/Control/ControlCollection.rss", "AddControl", controlCollection, "Add", [control], [("handle", "int"), ("control", "int")], "null");
-        yield return Release("System/Windows/Forms/Control/ControlCollection.rss", "ReleaseControlCollection", controlCollection);
-        yield return Instance("System/Windows/Forms/ToolStripItemCollection.rss", "AddToolStripItem", itemCollection, "Add", [toolStripItem], [("handle", "int"), ("item", "int")], "null");
-        yield return Release("System/Windows/Forms/ToolStripItemCollection.rss", "ReleaseToolStripItemCollection", itemCollection);
-
-        foreach (var binding in DialogBindings("System/Windows/Forms/OpenFileDialog.rss", "OpenFileDialog", openDialog, window, includeSaveProperties: false)) yield return binding;
-        foreach (var binding in DialogBindings("System/Windows/Forms/SaveFileDialog.rss", "SaveFileDialog", saveDialog, window, includeSaveProperties: true)) yield return binding;
-        yield return Constructor("System/Windows/Forms/FontDialog.rss", "NewFontDialog", fontDialog, [], [], "int");
-        yield return Instance("System/Windows/Forms/FontDialog.rss", "ShowFontDialog", fontDialog, "ShowDialog", [], [("handle", "int")], "string");
-        yield return Instance("System/Windows/Forms/FontDialog.rss", "ShowFontDialogForForm", fontDialog, "ShowDialog", [window], [("handle", "int"), ("form", "int")], "string");
-        yield return PropertyGet("System/Windows/Forms/FontDialog.rss", "GetFontDialogFont", fontDialog, "Font", [("handle", "int")], "int");
-        yield return Release("System/Windows/Forms/FontDialog.rss", "ReleaseFontDialog", fontDialog);
-        yield return Constructor("System/Windows/Forms/ColorDialog.rss", "NewColorDialog", colorDialog, [], [], "int");
-        yield return Instance("System/Windows/Forms/ColorDialog.rss", "ShowColorDialog", colorDialog, "ShowDialog", [], [("handle", "int")], "string");
-        yield return Instance("System/Windows/Forms/ColorDialog.rss", "ShowColorDialogForForm", colorDialog, "ShowDialog", [window], [("handle", "int"), ("form", "int")], "string");
-        yield return PropertyGet("System/Windows/Forms/ColorDialog.rss", "GetColorDialogColor", colorDialog, "Color", [("handle", "int")], "int");
-        yield return Release("System/Windows/Forms/ColorDialog.rss", "ReleaseColorDialog", colorDialog);
-
-        var bridge = typeof(PdVmWinFormsEventLoop);
-        yield return Static("System/Windows/EventLoop.rss", "UiShow", bridge, nameof(PdVmWinFormsEventLoop.Show), [typeof(object)], [("form", "int")], "null");
-        yield return Static("System/Windows/EventLoop.rss", "UiBindClick", bridge, nameof(PdVmWinFormsEventLoop.BindClick), [typeof(object), typeof(object), typeof(string)], [("form", "int"), ("control", "int"), ("action", "string")], "null");
-        yield return Static("System/Windows/EventLoop.rss", "UiBindDialog", bridge, nameof(PdVmWinFormsEventLoop.BindDialog), [typeof(object), typeof(object), typeof(object), typeof(string)], [("form", "int"), ("control", "int"), ("dialog", "int"), ("action", "string")], "null");
-        yield return Static("System/Windows/EventLoop.rss", "UiShowDialog", bridge, nameof(PdVmWinFormsEventLoop.ShowDialog), [typeof(object), typeof(object)], [("form", "int"), ("dialog", "int")], "string");
-        yield return Static("System/Windows/EventLoop.rss", "UiBindClosing", bridge, nameof(PdVmWinFormsEventLoop.BindClosing), [typeof(object), typeof(string)], [("form", "int"), ("action", "string")], "null");
-        yield return Static("System/Windows/EventLoop.rss", "UiWait", bridge, nameof(PdVmWinFormsEventLoop.Wait), [typeof(object)], [("form", "int")], "string");
-        yield return Static("System/Windows/EventLoop.rss", "UiClose", bridge, nameof(PdVmWinFormsEventLoop.Close), [typeof(object)], [("form", "int")], "null");
-    }
-
-    private static IEnumerable<Binding> DialogBindings(string module, string typeName, Type type, Type ownerType, bool includeSaveProperties)
-    {
-        yield return Constructor(module, $"New{typeName}", type, [], [], "int");
-        yield return PropertySet(module, $"Set{typeName}Filter", type, "Filter", [("handle", "int"), ("value", "string")]);
-        yield return PropertySet(module, $"Set{typeName}Title", type, "Title", [("handle", "int"), ("value", "string")]);
-        yield return PropertySet(module, $"Set{typeName}FileName", type, "FileName", [("handle", "int"), ("value", "string")]);
-        if (includeSaveProperties)
-        {
-            yield return PropertySet(module, $"Set{typeName}DefaultExt", type, "DefaultExt", [("handle", "int"), ("value", "string")]);
-            yield return PropertySet(module, $"Set{typeName}AddExtension", type, "AddExtension", [("handle", "int"), ("value", "bool")]);
-        }
-        yield return Instance(module, $"Show{typeName}", type, "ShowDialog", [], [("handle", "int")], "string");
-        yield return Instance(module, $"Show{typeName}ForForm", type, "ShowDialog", [ownerType], [("handle", "int"), ("form", "int")], "string");
-        yield return PropertyGet(module, $"Get{typeName}FileName", type, "FileName", [("handle", "int")], "string");
-        yield return Release(module, $"Release{typeName}", type);
     }
 
     private static IReadOnlyList<SystemImport> ScanSystemImports(string sourceRoot, string entrySourcePath)
@@ -310,10 +184,24 @@ public static class PdVmDotNetSourceCompiler
             foreach (Match match in SystemUsePattern.Matches(text))
             {
                 var line = text.AsSpan(0, match.Index).Count('\n') + 1;
+                var path = match.Groups["path"].Value;
+                var alias = match.Groups["alias"].Success
+                    ? match.Groups["alias"].Value
+                    : path[(path.LastIndexOf("::", StringComparison.Ordinal) + 2)..];
+                var usedMembers = Regex.Matches(
+                        text,
+                        $@"\b{Regex.Escape(alias)}::(?<member>[A-Za-z_][A-Za-z0-9_]*)\b",
+                        RegexOptions.CultureInvariant)
+                    .Select(call => new MemberUse(
+                        call.Groups["member"].Value,
+                        text.AsSpan(0, call.Index).Count('\n') + 1))
+                    .DistinctBy(member => member.Name, StringComparer.Ordinal)
+                    .ToArray();
                 imports.Add(new SystemImport(
                     Path.GetRelativePath(sourceRoot, sourcePath),
                     line,
-                    match.Groups["path"].Value));
+                    path,
+                    usedMembers));
             }
 
             foreach (Match match in UsePattern.Matches(text))
@@ -363,35 +251,29 @@ public static class PdVmDotNetSourceCompiler
 
     private static IReadOnlyList<ResolvedSystemImport> ResolveSystemImports(
         IReadOnlyList<SystemImport> imports,
-        string sourceRoot,
-        PdVmDotNetInteropProfile profile)
+        string sourceRoot)
     {
         if (imports.Count == 0)
         {
             return [];
         }
 
-        if (profile.HasFlag(PdVmDotNetInteropProfile.WindowsForms) && OperatingSystem.IsWindows())
+        var runtimeResolver = new PdVmDotNetHost(allowDynamicSystemCalls: true);
+        foreach (var import in imports)
         {
-            _ = new PdVmDotNetHost(allowDynamicSystemCalls: true)
-                .CanResolveType("System.Windows.Forms.Form");
+            _ = runtimeResolver.CanResolveType(import.TypeName);
         }
 
         var externalPaths = DiscoverExternalAssemblyPaths(sourceRoot);
         var assemblies = DiscoverAssemblies(externalPaths);
+        var attributedTypes = DiscoverAttributedInteropTypes(assemblies);
         var resolved = new List<ResolvedSystemImport>();
         foreach (var import in imports)
         {
-            var existing = ResolveProfileModule(import, profile);
-            if (existing is not null)
-            {
-                resolved.Add(existing);
-                continue;
-            }
-
-            var type = assemblies
-                .Select(assembly => FindClrType(assembly, import.TypeName))
-                .FirstOrDefault(candidate => candidate is not null);
+            var type = attributedTypes.GetValueOrDefault(import.TypeName) ??
+                assemblies
+                    .Select(assembly => FindClrType(assembly, import.TypeName))
+                    .FirstOrDefault(candidate => candidate is not null);
             if (type is null)
             {
                 var isNamespace = assemblies.Any(assembly => SafeExportedTypes(assembly)
@@ -411,6 +293,26 @@ public static class PdVmDotNetSourceCompiler
                 externalPaths.Contains(Path.GetFullPath(type.Assembly.Location), StringComparer.OrdinalIgnoreCase)));
         }
         return resolved;
+    }
+
+    private static IReadOnlyDictionary<string, Type> DiscoverAttributedInteropTypes(
+        IEnumerable<Assembly> assemblies)
+    {
+        var result = new Dictionary<string, Type>(StringComparer.Ordinal);
+        foreach (var type in assemblies.SelectMany(SafeExportedTypes))
+        {
+            var attribute = type.GetCustomAttribute<PdVmInteropTypeAttribute>();
+            if (attribute is null)
+            {
+                continue;
+            }
+            if (!result.TryAdd(attribute.TypeName, type))
+            {
+                throw new InvalidOperationException(
+                    $"multiple CLR types declare interop name '{attribute.TypeName}'");
+            }
+        }
+        return result;
     }
 
     private static Type? FindClrType(Assembly assembly, string typeName)
@@ -434,38 +336,6 @@ public static class PdVmDotNetSourceCompiler
         }
 
         return null;
-    }
-
-    private static ResolvedSystemImport? ResolveProfileModule(
-        SystemImport import,
-        PdVmDotNetInteropProfile profile)
-    {
-        var manualBindings = BuildBindingsForProfileModule(profile, import.ModulePath).ToArray();
-        if (manualBindings.Length == 0)
-        {
-            return null;
-        }
-        return new ResolvedSystemImport(import, manualBindings[0].DeclaringType, false);
-    }
-
-    private static IEnumerable<Binding> BuildBindingsForProfileModule(
-        PdVmDotNetInteropProfile profile,
-        string modulePath)
-    {
-        if (profile.HasFlag(PdVmDotNetInteropProfile.Common))
-        {
-            foreach (var binding in BuildCommonBindings().Where(binding => binding.ModulePath == modulePath))
-            {
-                yield return binding;
-            }
-        }
-        if (profile.HasFlag(PdVmDotNetInteropProfile.WindowsForms) && OperatingSystem.IsWindows())
-        {
-            foreach (var binding in BuildWindowsFormsBindings().Where(binding => binding.ModulePath == modulePath))
-            {
-                yield return binding;
-            }
-        }
     }
 
     private static IReadOnlyList<string> DiscoverExternalAssemblyPaths(string sourceRoot)
@@ -551,14 +421,23 @@ public static class PdVmDotNetSourceCompiler
 
     private static IEnumerable<Binding> BuildMetadataBindings(string modulePath, Type type)
     {
+        return MetadataBindingCache.GetOrAdd(
+                type,
+                static resolvedType => ScanMetadataBindings(resolvedType).ToArray())
+            .Select(binding => binding with { ModulePath = modulePath });
+    }
+
+    private static IEnumerable<Binding> ScanMetadataBindings(Type type)
+    {
         var bindings = new List<Binding>();
+        var typeName = InteropTypeName(type);
         if (!type.IsAbstract || !type.IsSealed)
         {
             foreach (var constructor in type.GetConstructors(BindingFlags.Public | BindingFlags.Instance))
             {
                 if (TryBuildParameters(constructor.GetParameters(), includeHandle: false, out var parameterTypes, out var parameters))
                 {
-                    bindings.Add(Constructor(modulePath, "New", type, parameterTypes, parameters, "int"));
+                    bindings.Add(Constructor(string.Empty, $"New{typeName}", type, parameterTypes, parameters, "int"));
                 }
             }
         }
@@ -572,8 +451,8 @@ public static class PdVmDotNetSourceCompiler
                 continue;
             }
             bindings.Add(method.IsStatic
-                ? Static(modulePath, method.Name, type, method.Name, parameterTypes, parameters, returnSchema)
-                : Instance(modulePath, method.Name, type, method.Name, parameterTypes, parameters, returnSchema));
+                ? Static(string.Empty, method.Name, type, method.Name, parameterTypes, parameters, returnSchema)
+                : Instance(string.Empty, method.Name, type, method.Name, parameterTypes, parameters, returnSchema));
         }
 
         foreach (var property in type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
@@ -581,13 +460,19 @@ public static class PdVmDotNetSourceCompiler
         {
             if (property.GetMethod is not null && TryGetSchema(property.PropertyType, out var getSchema))
             {
-                bindings.Add(PropertyGet(modulePath, $"Get{property.Name}", type, property.Name, [("handle", "int")], getSchema));
+                bindings.Add(PropertyGet(
+                    string.Empty,
+                    $"Get{typeName}{property.Name}",
+                    type,
+                    property.Name,
+                    [("handle", "int")],
+                    getSchema));
             }
             if (property.SetMethod is not null && TryGetSchema(property.PropertyType, out var setSchema))
             {
                 bindings.Add(new Binding(
-                    modulePath,
-                    $"Set{property.Name}",
+                    string.Empty,
+                    $"Set{typeName}{property.Name}",
                     PdVmDotNetMemberKind.InstancePropertySet,
                     type,
                     property.Name,
@@ -597,11 +482,25 @@ public static class PdVmDotNetSourceCompiler
             }
         }
 
-        if (!type.IsValueType)
+        if (!type.IsValueType && !(type.IsAbstract && type.IsSealed))
         {
-            bindings.Add(Release(modulePath, "Release", type));
+            bindings.Add(Release(string.Empty, $"Release{typeName}", type));
         }
-        return AssignGeneratedNames(bindings);
+        return AssignGeneratedNames(bindings.DistinctBy(BindingIdentity));
+    }
+
+    private static string BindingIdentity(Binding binding) =>
+        $"{binding.Kind}|{binding.MemberName}|" +
+        string.Join("|", binding.ClrParameterTypes.Select(type => type.AssemblyQualifiedName));
+
+    private static string InteropTypeName(Type type)
+    {
+        var declaredName = type.GetCustomAttribute<PdVmInteropTypeAttribute>()?.TypeName;
+        var name = declaredName is null
+            ? type.Name
+            : declaredName[(declaredName.LastIndexOf('.') + 1)..];
+        var genericMarker = name.IndexOf('`');
+        return genericMarker < 0 ? name : name[..genericMarker];
     }
 
     private static bool TryBuildParameters(
@@ -656,7 +555,9 @@ public static class PdVmDotNetSourceCompiler
         foreach (var group in bindings.GroupBy(binding => binding.PublicName, StringComparer.Ordinal))
         {
             var ordered = group.OrderBy(binding => binding.ClrParameterTypes.Length)
-                .ThenBy(binding => string.Join("_", binding.ClrParameterTypes.Select(type => type.Name)), StringComparer.Ordinal)
+                .ThenBy(
+                    binding => string.Join("_", binding.ClrParameterTypes.Select(type => type.AssemblyQualifiedName)),
+                    StringComparer.Ordinal)
                 .ThenBy(binding => binding.Kind)
                 .ToArray();
             for (var index = 0; index < ordered.Length; index++)
@@ -716,17 +617,6 @@ public static class PdVmDotNetSourceCompiler
         };
     }
 
-    private static IEnumerable<Binding> ControlBindings(string module, string typeName, Type type)
-    {
-        yield return Constructor(module, $"New{typeName}", type, [], [], "int");
-        yield return PropertySet(module, $"Set{typeName}Text", type, "Text", [("handle", "int"), ("value", "string")]);
-        yield return PropertySet(module, $"Set{typeName}Left", type, "Left", [("handle", "int"), ("value", "int")]);
-        yield return PropertySet(module, $"Set{typeName}Top", type, "Top", [("handle", "int"), ("value", "int")]);
-        yield return PropertySet(module, $"Set{typeName}Width", type, "Width", [("handle", "int"), ("value", "int")]);
-        yield return PropertySet(module, $"Set{typeName}Height", type, "Height", [("handle", "int"), ("value", "int")]);
-        yield return Release(module, $"Release{typeName}", type);
-    }
-
     private static Binding Static(string module, string name, Type type, string member, Type[] clrParameters, (string Name, string Schema)[] parameters, string result) =>
         new(module, name, PdVmDotNetMemberKind.StaticMethod, type, member, clrParameters, parameters.Select(item => new Parameter(item.Name, item.Schema)).ToArray(), result);
 
@@ -739,26 +629,8 @@ public static class PdVmDotNetSourceCompiler
     private static Binding PropertyGet(string module, string name, Type type, string property, (string Name, string Schema)[] parameters, string result) =>
         new(module, name, PdVmDotNetMemberKind.InstancePropertyGet, type, property, [], parameters.Select(item => new Parameter(item.Name, item.Schema)).ToArray(), result);
 
-    private static Binding PropertySet(string module, string name, Type type, string property, (string Name, string Schema)[] parameters)
-    {
-        var propertyType = type.GetProperty(property, BindingFlags.Public | BindingFlags.Instance)?.PropertyType ??
-            throw new InvalidOperationException($"property {type.FullName}.{property} was not found");
-        return new(module, name, PdVmDotNetMemberKind.InstancePropertySet, type, property, [propertyType], parameters.Select(item => new Parameter(item.Name, item.Schema)).ToArray(), "null");
-    }
-
     private static Binding Release(string module, string name, Type type) =>
         new(module, name, PdVmDotNetMemberKind.Release, type, "Release", [], [new Parameter("handle", "int")], "bool");
-
-    private static Type ResolveLoadedType(PdVmDotNetHost host, string name)
-    {
-        if (!host.CanResolveType(name))
-        {
-            throw new InvalidOperationException($"CLR type '{name}' was not found");
-        }
-        return AppDomain.CurrentDomain.GetAssemblies()
-            .Select(assembly => assembly.GetType(name, throwOnError: false, ignoreCase: false))
-            .First(type => type is not null)!;
-    }
 
     private static Dictionary<string, PdVmDotNetBindingDescriptor> WriteBindingModules(
         string root,

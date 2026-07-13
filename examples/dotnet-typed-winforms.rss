@@ -32,52 +32,52 @@ MenuStrip::SetMenuStripDock(menu, "Top");
 Form::SetFormMainMenuStrip(form, menu);
 let menu_items = MenuStrip::GetMenuStripItems(menu);
 
-let file_menu = ToolStripMenuItem::NewToolStripMenuItem("&File");
-let format_menu = ToolStripMenuItem::NewToolStripMenuItem("F&ormat");
-let view_menu = ToolStripMenuItem::NewToolStripMenuItem("&View");
-ToolStripItemCollection::AddToolStripItem(menu_items, file_menu);
-ToolStripItemCollection::AddToolStripItem(menu_items, format_menu);
-ToolStripItemCollection::AddToolStripItem(menu_items, view_menu);
+let file_menu = ToolStripMenuItem::NewToolStripMenuItemString("&File");
+let format_menu = ToolStripMenuItem::NewToolStripMenuItemString("F&ormat");
+let view_menu = ToolStripMenuItem::NewToolStripMenuItemString("&View");
+ToolStripItemCollection::AddToolStripItemInstance(menu_items, file_menu);
+ToolStripItemCollection::AddToolStripItemInstance(menu_items, format_menu);
+ToolStripItemCollection::AddToolStripItemInstance(menu_items, view_menu);
 
-let new_item = ToolStripMenuItem::NewToolStripMenuItem("&New");
-let open_item = ToolStripMenuItem::NewToolStripMenuItem("&Open...");
-let save_item = ToolStripMenuItem::NewToolStripMenuItem("&Save");
-let save_as_item = ToolStripMenuItem::NewToolStripMenuItem("Save &As...");
-let exit_item = ToolStripMenuItem::NewToolStripMenuItem("E&xit");
+let new_item = ToolStripMenuItem::NewToolStripMenuItemString("&New");
+let open_item = ToolStripMenuItem::NewToolStripMenuItemString("&Open...");
+let save_item = ToolStripMenuItem::NewToolStripMenuItemString("&Save");
+let save_as_item = ToolStripMenuItem::NewToolStripMenuItemString("Save &As...");
+let exit_item = ToolStripMenuItem::NewToolStripMenuItemString("E&xit");
 ToolStripMenuItem::SetToolStripMenuItemShortcutKeys(new_item, "Control, N");
 ToolStripMenuItem::SetToolStripMenuItemShortcutKeys(open_item, "Control, O");
 ToolStripMenuItem::SetToolStripMenuItemShortcutKeys(save_item, "Control, S");
 ToolStripMenuItem::SetToolStripMenuItemShortcutKeys(save_as_item, "Control, Shift, S");
-let file_items = ToolStripMenuItem::GetToolStripMenuItemItems(file_menu);
-ToolStripItemCollection::AddToolStripItem(file_items, new_item);
-ToolStripItemCollection::AddToolStripItem(file_items, open_item);
-ToolStripItemCollection::AddToolStripItem(file_items, save_item);
-ToolStripItemCollection::AddToolStripItem(file_items, save_as_item);
-ToolStripItemCollection::AddToolStripItem(file_items, ToolStripSeparator::NewToolStripSeparator());
-ToolStripItemCollection::AddToolStripItem(file_items, exit_item);
+let file_items = ToolStripMenuItem::GetToolStripMenuItemDropDownItems(file_menu);
+ToolStripItemCollection::AddToolStripItemInstance(file_items, new_item);
+ToolStripItemCollection::AddToolStripItemInstance(file_items, open_item);
+ToolStripItemCollection::AddToolStripItemInstance(file_items, save_item);
+ToolStripItemCollection::AddToolStripItemInstance(file_items, save_as_item);
+ToolStripItemCollection::AddToolStripItemInstance(file_items, ToolStripSeparator::NewToolStripSeparator());
+ToolStripItemCollection::AddToolStripItemInstance(file_items, exit_item);
 
-let font_item = ToolStripMenuItem::NewToolStripMenuItem("&Font...");
-let color_item = ToolStripMenuItem::NewToolStripMenuItem("Text &Color...");
-let format_items = ToolStripMenuItem::GetToolStripMenuItemItems(format_menu);
-ToolStripItemCollection::AddToolStripItem(format_items, font_item);
-ToolStripItemCollection::AddToolStripItem(format_items, color_item);
+let font_item = ToolStripMenuItem::NewToolStripMenuItemString("&Font...");
+let color_item = ToolStripMenuItem::NewToolStripMenuItemString("Text &Color...");
+let format_items = ToolStripMenuItem::GetToolStripMenuItemDropDownItems(format_menu);
+ToolStripItemCollection::AddToolStripItemInstance(format_items, font_item);
+ToolStripItemCollection::AddToolStripItemInstance(format_items, color_item);
 
-let wrap_item = ToolStripMenuItem::NewToolStripMenuItem("&Word Wrap");
+let wrap_item = ToolStripMenuItem::NewToolStripMenuItemString("&Word Wrap");
 ToolStripMenuItem::SetToolStripMenuItemChecked(wrap_item, true);
-let view_items = ToolStripMenuItem::GetToolStripMenuItemItems(view_menu);
-ToolStripItemCollection::AddToolStripItem(view_items, wrap_item);
+let view_items = ToolStripMenuItem::GetToolStripMenuItemDropDownItems(view_menu);
+ToolStripItemCollection::AddToolStripItemInstance(view_items, wrap_item);
 
 let status = StatusStrip::NewStatusStrip();
 StatusStrip::SetStatusStripDock(status, "Bottom");
 let status_label = ToolStripStatusLabel::NewToolStripStatusLabel();
 ToolStripStatusLabel::SetToolStripStatusLabelText(status_label, "Ready");
 let status_items = StatusStrip::GetStatusStripItems(status);
-ToolStripItemCollection::AddToolStripItem(status_items, status_label);
+ToolStripItemCollection::AddToolStripItemInstance(status_items, status_label);
 
 let controls = Form::GetFormControls(form);
-ControlCollection::AddControl(controls, editor);
-ControlCollection::AddControl(controls, status);
-ControlCollection::AddControl(controls, menu);
+ControlCollection::Add(controls, editor);
+ControlCollection::Add(controls, status);
+ControlCollection::Add(controls, menu);
 
 let open_dialog = OpenFileDialog::NewOpenFileDialog();
 OpenFileDialog::SetOpenFileDialogFilter(open_dialog, "Text documents (*.txt)|*.txt|All files (*.*)|*.*");
@@ -90,21 +90,21 @@ SaveFileDialog::SetSaveFileDialogAddExtension(save_dialog, true);
 let font_dialog = FontDialog::NewFontDialog();
 let color_dialog = ColorDialog::NewColorDialog();
 
-Ui::UiBindClick(form, new_item, "new");
-Ui::UiBindDialog(form, open_item, open_dialog, "open");
-Ui::UiBindDialog(form, save_item, save_dialog, "save");
-Ui::UiBindDialog(form, save_as_item, save_dialog, "save_as");
-Ui::UiBindDialog(form, font_item, font_dialog, "font");
-Ui::UiBindDialog(form, color_item, color_dialog, "color");
-Ui::UiBindClick(form, wrap_item, "wrap");
-Ui::UiBindClick(form, exit_item, "close");
-Ui::UiBindClosing(form, "close");
-Ui::UiShow(form);
+Ui::BindClick(form, new_item, "new");
+Ui::BindDialog(form, open_item, open_dialog, "open");
+Ui::BindDialog(form, save_item, save_dialog, "save");
+Ui::BindDialog(form, save_as_item, save_dialog, "save_as");
+Ui::BindDialog(form, font_item, font_dialog, "font");
+Ui::BindDialog(form, color_item, color_dialog, "color");
+Ui::BindClick(form, wrap_item, "wrap");
+Ui::BindClick(form, exit_item, "close");
+Ui::BindClosing(form, "close");
+Ui::Show(form);
 
 let mut current_path = "";
 let mut word_wrap = true;
 while true {
-    let action = Ui::UiWait(form);
+    let action = Ui::Wait(form);
     if action == "new" {
         RichTextBox::SetRichTextBoxText(editor, "");
         current_path = "";
@@ -112,7 +112,7 @@ while true {
         ToolStripStatusLabel::SetToolStripStatusLabelText(status_label, "New document");
     }
     if action == "open" {
-        if Ui::UiShowDialog(form, open_dialog) == "OK" {
+        if Ui::ShowDialog(form, open_dialog) == "OK" {
             current_path = OpenFileDialog::GetOpenFileDialogFileName(open_dialog);
             RichTextBox::SetRichTextBoxText(editor, File::ReadAllText(current_path));
             Form::SetFormText(form, current_path + " - RustScript Notepad");
@@ -121,7 +121,7 @@ while true {
     }
     if action == "save" {
         if current_path == "" {
-            if Ui::UiShowDialog(form, save_dialog) == "OK" {
+            if Ui::ShowDialog(form, save_dialog) == "OK" {
                 current_path = SaveFileDialog::GetSaveFileDialogFileName(save_dialog);
             }
         }
@@ -133,7 +133,7 @@ while true {
     }
     if action == "save_as" {
         SaveFileDialog::SetSaveFileDialogFileName(save_dialog, current_path);
-        if Ui::UiShowDialog(form, save_dialog) == "OK" {
+        if Ui::ShowDialog(form, save_dialog) == "OK" {
             current_path = SaveFileDialog::GetSaveFileDialogFileName(save_dialog);
             File::WriteAllText(current_path, RichTextBox::GetRichTextBoxText(editor));
             Form::SetFormText(form, current_path + " - RustScript Notepad");
@@ -141,12 +141,12 @@ while true {
         }
     }
     if action == "font" {
-        if Ui::UiShowDialog(form, font_dialog) == "OK" {
+        if Ui::ShowDialog(form, font_dialog) == "OK" {
             RichTextBox::SetRichTextBoxFont(editor, FontDialog::GetFontDialogFont(font_dialog));
         }
     }
     if action == "color" {
-        if Ui::UiShowDialog(form, color_dialog) == "OK" {
+        if Ui::ShowDialog(form, color_dialog) == "OK" {
             RichTextBox::SetRichTextBoxForeColor(editor, ColorDialog::GetColorDialogColor(color_dialog));
         }
     }
@@ -157,7 +157,7 @@ while true {
         ToolStripStatusLabel::SetToolStripStatusLabelText(status_label, "Word wrap changed");
     }
     if action == "close" || action == "__closed" {
-        Ui::UiClose(form);
+        Ui::Close(form);
         break;
     }
 }

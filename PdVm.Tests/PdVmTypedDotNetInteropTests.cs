@@ -114,11 +114,87 @@ public sealed class PdVmTypedDotNetInteropTests
     }
 
     [Fact]
+    public void SourceWrapperReadsClrSignaturesFromRuntimeMetadata()
+    {
+        using var fixture = new SourceFixture(
+            "use System::Math;\n" +
+            "Math::Sqrt(81.0);\n");
+
+        var output = PdVmDotNetSourceCompiler.CompileFile(fixture.SourcePath, fixture.OutputPath);
+        var program = PdVmAssemblyLoader.CreateProgram(Assembly.Load(File.ReadAllBytes(output)));
+        var host = PdVmDefaultHost.CreateConsoleHost();
+        host.RegisterFallback(new PdVmDotNetHost().Call);
+
+        var result = PdVmExecution.Run(program, host);
+
+        Assert.Equal(PdVmStatusKind.Halted, result.Status.Kind);
+        Assert.Equal(9d, Assert.Single(program.Stack).AsFloat());
+    }
+
+    [Fact]
+    public void SourceWrapperReportsReadableErrorForMissingMetadataMember()
+    {
+        using var fixture = new SourceFixture(
+            "use System::Math;\n" +
+            "Math::DefinitelyMissing(81.0);\n");
+
+        var error = Assert.Throws<PdVmCompilerException>(() =>
+            PdVmDotNetSourceCompiler.CompileFile(fixture.SourcePath, fixture.OutputPath));
+
+        Assert.Contains("main.rss:2", error.Message);
+        Assert.Contains("System.Math", error.Message);
+        Assert.Contains("DefinitelyMissing", error.Message);
+        Assert.Contains("metadata", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void SourceCompilerContainsNoManualClrSignatureCatalog()
+    {
+        var compilerPath = Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory,
+            "..", "..", "..", "..",
+            "PdVm.Compiler",
+            "PdVmDotNetSourceCompiler.cs"));
+        var source = File.ReadAllText(compilerPath);
+
+        Assert.DoesNotContain("BuildCommonBindings", source);
+        Assert.DoesNotContain("BuildWindowsFormsBindings", source);
+        Assert.DoesNotContain("ControlBindings", source);
+        Assert.DoesNotContain("DialogBindings", source);
+        Assert.DoesNotContain("System/Console.rss", source);
+        Assert.DoesNotContain("System/Windows/Forms/Form.rss", source);
+    }
+
+    [Fact]
+    public void SourceWrapperCompilesAndRunsRuntimeSizedRustScriptArrays()
+    {
+        using var fixture = new SourceFixture(
+            "fn filled(size: int, value: int) -> [int] {\n" +
+            "    let mut values: [int] = [];\n" +
+            "    let mut index = 0;\n" +
+            "    while index < size {\n" +
+            "        values[values.length] = value;\n" +
+            "        index = index + 1;\n" +
+            "    }\n" +
+            "    values\n" +
+            "}\n" +
+            "let values = filled(4, 7);\n" +
+            "values[0] + values[3] + values.length;\n");
+
+        var output = PdVmDotNetSourceCompiler.CompileFile(fixture.SourcePath, fixture.OutputPath);
+        var program = PdVmAssemblyLoader.CreateProgram(Assembly.Load(File.ReadAllBytes(output)));
+        var result = PdVmExecution.Run(program, PdVmDefaultHost.CreateConsoleHost());
+
+        Assert.Equal(PdVmStatusKind.Halted, result.Status.Kind);
+        Assert.Equal(18, Assert.Single(program.Stack).AsInt());
+    }
+
+    [Fact]
     public void SourceWrapperReportsParameterTypeErrorsAtCompileTime()
     {
         using var fixture = new SourceFixture(
             "use System::Console;\n" +
-            "Console::WriteLine(123);\n");
+            "Console::WriteLineString(123);\n");
 
         var error = Assert.Throws<PdVmCompilerException>(() =>
             PdVmDotNetSourceCompiler.CompileFile(fixture.SourcePath, fixture.OutputPath));
@@ -139,8 +215,8 @@ public sealed class PdVmTypedDotNetInteropTests
             "use System::Windows::Forms::Form;\n" +
             "use System::Windows::EventLoop as Ui;\n" +
             "let form = Form::NewForm();\n" +
-            "Ui::UiBindClosing(form, \"close\");\n" +
-            "Ui::UiClose(form);\n");
+            "Ui::BindClosing(form, \"close\");\n" +
+            "Ui::Close(form);\n");
 
         var output = PdVmDotNetSourceCompiler.CompileFile(
             fixture.SourcePath,
@@ -200,13 +276,13 @@ public sealed class PdVmTypedDotNetInteropTests
             "use System::Windows::Forms::ToolStripMenuItem;\n" +
             "use System::Windows::EventLoop as Ui;\n" +
             "let form = Form::NewForm();\n" +
-            "let item = ToolStripMenuItem::NewToolStripMenuItem(\"Run\");\n" +
-            "Ui::UiBindClick(form, item, \"clicked\");\n" +
-            "Ui::UiShow(form);\n" +
-            "ToolStripMenuItem::PerformToolStripMenuItemClick(item);\n" +
-            "let action = Ui::UiWait(form);\n" +
+            "let item = ToolStripMenuItem::NewToolStripMenuItemString(\"Run\");\n" +
+            "Ui::BindClick(form, item, \"clicked\");\n" +
+            "Ui::Show(form);\n" +
+            "ToolStripMenuItem::PerformClick(item);\n" +
+            "let action = Ui::Wait(form);\n" +
             $"File::WriteAllText(\"{signalPath.Replace('\\', '/')}\", action);\n" +
-            "Ui::UiClose(form);\n");
+            "Ui::Close(form);\n");
 
         try
         {
@@ -238,7 +314,7 @@ public sealed class PdVmTypedDotNetInteropTests
         using var fixture = new SourceFixture(
             "use System::Security::Cryptography::SHA256;\n" +
             "let algorithm = SHA256::Create();\n" +
-            "SHA256::Release(algorithm);\n");
+            "SHA256::ReleaseSHA256(algorithm);\n");
 
         var output = PdVmDotNetSourceCompiler.CompileFile(fixture.SourcePath, fixture.OutputPath);
 
