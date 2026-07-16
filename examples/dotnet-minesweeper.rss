@@ -607,7 +607,7 @@ while true {
         Visuals::ShowMessage(form, "Open every square that does not contain a mine.\nRight-click to place a flag or question mark.\nDouble-click a revealed number to open its remaining neighbors.", "Minesweeper Help");
     }
     if action == "about" {
-        Visuals::ShowMessage(form, "Minesweeper\nRustScript game logic running on the CLR VM.", "About Minesweeper");
+        Visuals::ShowMessage(form, "Minesweeper\nRustScript game logic running on IronRust.", "About Minesweeper");
     }
 
     if action == "new" {

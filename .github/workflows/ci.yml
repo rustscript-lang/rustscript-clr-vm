@@ -1,4 +1,4 @@
-name: CI
+name: IronRust CI
 
 on:
   push:
@@ -14,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          path: rustscript-clr-vm
+          path: IronRust
       - uses: actions/checkout@v4
         with:
           repository: rustscript-lang/rustscript
@@ -30,16 +30,16 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Build native compiler
-        working-directory: rustscript-clr-vm
+        working-directory: IronRust
         run: cargo build --locked --release --manifest-path native/pd-vm-compiler/Cargo.toml
       - name: Restore
-        working-directory: rustscript-clr-vm
-        run: dotnet restore pd-vm-clr.sln
+        working-directory: IronRust
+        run: dotnet restore IronRust.sln
       - name: Build
-        working-directory: rustscript-clr-vm
-        run: dotnet build pd-vm-clr.sln --no-restore --configuration Release
+        working-directory: IronRust
+        run: dotnet build IronRust.sln --no-restore --configuration Release
       - name: Tests
-        working-directory: rustscript-clr-vm
+        working-directory: IronRust
         env:
-          PDVM_NATIVE_COMPILER: ${{ github.workspace }}/rustscript-clr-vm/native/pd-vm-compiler/target/release/libpd_vm_compiler.so
-        run: dotnet test pd-vm-clr.sln --no-build --configuration Release --verbosity normal
+          PDVM_NATIVE_COMPILER: ${{ github.workspace }}/IronRust/native/pd-vm-compiler/target/release/libpd_vm_compiler.so
+        run: dotnet test IronRust.sln --no-build --configuration Release --verbosity normal

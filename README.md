@@ -1,11 +1,11 @@
-# RustScript CLR VM
+# IronRust
 
-CLR runtime and compiler support for PD VM bytecode. The repository includes the CLR VM runtime, bytecode-to-CLR compiler, runner CLI, tests, examples, and a minimal Edge HTTP runtime.
+IronRust is the RustScript runtime and compiler for Microsoft CLR. The repository includes the CLR runtime, bytecode-to-CLR compiler, runner CLI, tests, examples, and a minimal Edge HTTP runtime.
 
 ## Related projects
 
 - RustScript core VM and standard library: https://github.com/rustscript-lang/rustscript
-- CLR VM: https://github.com/rustscript-lang/rustscript-clr-vm
+- IronRust: https://github.com/rustscript-lang/IronRust
 - Edge runtime and ABI: https://github.com/rustscript-lang/pd-edge
 - Controller: https://github.com/rustscript-lang/pd-controller
 
@@ -37,7 +37,7 @@ CLR runtime and compiler support for PD VM bytecode. The repository includes the
 From the repo root:
 
 ```powershell
-dotnet build pd-vm-clr.sln
+dotnet build IronRust.sln
 ```
 
 Release build for the proxy runtime:
@@ -51,7 +51,7 @@ dotnet build PdEdge.Http\PdEdge.Http.csproj -c Release
 Build first, then run tests without rebuilding:
 
 ```powershell
-dotnet test pd-vm-clr.sln --no-build
+dotnet test IronRust.sln --no-build
 ```
 
 Or run just the HTTP runtime tests:
