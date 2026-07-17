@@ -2,13 +2,6 @@
 
 IronRust is the RustScript runtime and compiler for Microsoft CLR. The repository includes the CLR runtime, bytecode-to-CLR compiler, runner CLI, tests, examples, and a minimal Edge HTTP runtime.
 
-## Related projects
-
-- RustScript core VM and standard library: https://github.com/rustscript-lang/rustscript
-- IronRust: https://github.com/rustscript-lang/IronRust
-- Edge runtime and ABI: https://github.com/rustscript-lang/pd-edge
-- Controller: https://github.com/rustscript-lang/pd-controller
-
 ## Projects
 
 - `PdVm.Runtime`
