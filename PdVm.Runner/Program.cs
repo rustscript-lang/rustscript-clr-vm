@@ -156,7 +156,25 @@ internal static class ProgramEntry
         var dotNetHost = new PdVmDotNetHost(
             allowDynamicSystemCalls: HasFlag(args, "--enable-dynamic-dotnet"));
         host.RegisterFallback(dotNetHost.Call);
-        var result = await PdVmExecution.RunAsync(program, host, GetMaxSteps(args, optionsStartIndex));
+        var maxSteps = GetMaxSteps(args, optionsStartIndex);
+        var profile = GetInteropProfile(args);
+        if ((profile & PdVmDotNetInteropProfile.WindowsForms) != 0)
+        {
+            var callableProgram = program as IPdVmCallableProgram ??
+                throw new InvalidOperationException(
+                    "the Windows Forms profile requires a callable VMBC v10 program");
+            callableProgram.CallbackErrorObserver = exception => Console.Error.WriteLine(exception);
+            using var application = PdVmWinFormsApplication.Attach(callableProgram, host);
+            var winFormsResult = PdVmExecution.Run(program, host, maxSteps);
+            Console.WriteLine($"status={winFormsResult.Status} steps={winFormsResult.Steps}");
+            if (application.HasMainForm)
+            {
+                application.RunMessageLoop();
+            }
+            return 0;
+        }
+
+        var result = await PdVmExecution.RunAsync(program, host, maxSteps);
         Console.WriteLine($"status={result.Status} steps={result.Steps}");
         return 0;
     }

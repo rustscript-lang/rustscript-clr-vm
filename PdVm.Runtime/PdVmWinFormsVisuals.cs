@@ -113,19 +113,15 @@ public static class PdVmWinFormsVisuals
     public static void SetApplicationVisualStyleState(string state)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(state);
-        PdVmWinFormsDispatcher.Invoke(() =>
-        {
-            var application = Type.GetType(
-                "System.Windows.Forms.Application, System.Windows.Forms",
-                throwOnError: true)!;
-            var property = application.GetProperty(
-                "VisualStyleState",
-                BindingFlags.Public | BindingFlags.Static) ??
-                throw new InvalidOperationException(
-                    "System.Windows.Forms.Application does not expose VisualStyleState");
-            property.SetValue(null, Enum.Parse(property.PropertyType, state, ignoreCase: false));
-            return true;
-        });
+        var application = Type.GetType(
+            "System.Windows.Forms.Application, System.Windows.Forms",
+            throwOnError: true)!;
+        var property = application.GetProperty(
+            "VisualStyleState",
+            BindingFlags.Public | BindingFlags.Static) ??
+            throw new InvalidOperationException(
+                "System.Windows.Forms.Application does not expose VisualStyleState");
+        property.SetValue(null, Enum.Parse(property.PropertyType, state, ignoreCase: false));
     }
 
     public static void SetClientSize(object form, long width, long height)
@@ -135,59 +131,67 @@ public static class PdVmWinFormsVisuals
             throw new ArgumentOutOfRangeException(nameof(width), "client dimensions are out of range");
         }
 
-        PdVmWinFormsDispatcher.Invoke(() =>
+        var property = form.GetType().GetProperty(
+            "ClientSize",
+            BindingFlags.Public | BindingFlags.Instance) ??
+            throw new InvalidOperationException(
+                $"{form.GetType().FullName} does not expose ClientSize");
+        var size = Activator.CreateInstance(
+            property.PropertyType,
+            checked((int)width),
+            checked((int)height)) ??
+            throw new InvalidOperationException("unable to create a WinForms client size");
+        property.SetValue(form, size);
+    }
+
+    public static void SetControlBounds(
+        object control,
+        long left,
+        long top,
+        long width,
+        long height)
+    {
+        ArgumentNullException.ThrowIfNull(control);
+        if (left < int.MinValue || left > int.MaxValue ||
+            top < int.MinValue || top > int.MaxValue ||
+            width < 0 || width > int.MaxValue ||
+            height < 0 || height > int.MaxValue)
         {
-            var property = form.GetType().GetProperty(
-                "ClientSize",
-                BindingFlags.Public | BindingFlags.Instance) ??
-                throw new InvalidOperationException(
-                    $"{form.GetType().FullName} does not expose ClientSize");
-            var size = Activator.CreateInstance(
-                property.PropertyType,
-                checked((int)width),
-                checked((int)height)) ??
-                throw new InvalidOperationException("unable to create a WinForms client size");
-            property.SetValue(form, size);
-            return true;
-        });
+            throw new ArgumentOutOfRangeException(
+                nameof(width),
+                "control bounds are outside the supported WinForms range");
+        }
+
+        SetProperty(control, "Left", checked((int)left));
+        SetProperty(control, "Top", checked((int)top));
+        SetProperty(control, "Width", checked((int)width));
+        SetProperty(control, "Height", checked((int)height));
     }
 
     public static void SetControlText(object control, string text)
     {
         ArgumentNullException.ThrowIfNull(text);
-        PdVmWinFormsDispatcher.Invoke(() =>
-        {
-            SetProperty(control, "Text", text);
-            return true;
-        });
+        SetProperty(control, "Text", text);
     }
 
     public static void SetControlEnabled(object control, bool enabled)
     {
-        PdVmWinFormsDispatcher.Invoke(() =>
-        {
-            SetProperty(control, "Enabled", enabled);
-            return true;
-        });
+        SetProperty(control, "Enabled", enabled);
     }
 
     public static void SetControlBitmap(object control, byte[] encodedBitmap)
     {
         ValidateBitmap(encodedBitmap, nameof(encodedBitmap));
-        PdVmWinFormsDispatcher.Invoke(() =>
-        {
-            var imageProperty = control.GetType().GetProperty(
-                "Image",
-                BindingFlags.Public | BindingFlags.Instance) ??
-                throw new InvalidOperationException(
-                    $"{control.GetType().FullName} does not expose Image");
-            var bitmap = DecodeBitmap(imageProperty.PropertyType, encodedBitmap);
-            var state = ControlBitmaps.GetValue(control, static _ => new ControlBitmapState());
-            imageProperty.SetValue(control, bitmap);
-            state.Bitmap?.Dispose();
-            state.Bitmap = bitmap as IDisposable;
-            return true;
-        });
+        var imageProperty = control.GetType().GetProperty(
+            "Image",
+            BindingFlags.Public | BindingFlags.Instance) ??
+            throw new InvalidOperationException(
+                $"{control.GetType().FullName} does not expose Image");
+        var bitmap = DecodeBitmap(imageProperty.PropertyType, encodedBitmap);
+        var state = ControlBitmaps.GetValue(control, static _ => new ControlBitmapState());
+        imageProperty.SetValue(control, bitmap);
+        state.Bitmap?.Dispose();
+        state.Bitmap = bitmap as IDisposable;
     }
 
     public static void ConfigureSpriteText(
@@ -209,42 +213,38 @@ public static class PdVmWinFormsVisuals
             throw new ArgumentException("sprite glyph characters must be unique", nameof(glyphCharacters));
         }
 
-        PdVmWinFormsDispatcher.Invoke(() =>
+        if (SpriteTexts.TryGetValue(control, out _))
         {
-            if (SpriteTexts.TryGetValue(control, out _))
-            {
-                throw new InvalidOperationException("control is already configured for sprite text");
-            }
-            var imageType = Type.GetType(
-                "System.Drawing.Image, System.Drawing.Common",
-                throwOnError: true)!;
-            var bitmap = DecodeBitmap(imageType, spriteSheet);
-            var width = (int)imageType.GetProperty("Width")!.GetValue(bitmap)!;
-            var height = (int)imageType.GetProperty("Height")!.GetValue(bitmap)!;
-            var expectedWidth = checked((int)glyphWidth * glyphCharacters.Length);
-            if (width != expectedWidth || height != glyphHeight)
-            {
-                (bitmap as IDisposable)?.Dispose();
-                throw new ArgumentException(
-                    $"sprite sheet must be {expectedWidth}x{glyphHeight} pixels",
-                    nameof(spriteSheet));
-            }
+            throw new InvalidOperationException("control is already configured for sprite text");
+        }
+        var imageType = Type.GetType(
+            "System.Drawing.Image, System.Drawing.Common",
+            throwOnError: true)!;
+        var bitmap = DecodeBitmap(imageType, spriteSheet);
+        var width = (int)imageType.GetProperty("Width")!.GetValue(bitmap)!;
+        var height = (int)imageType.GetProperty("Height")!.GetValue(bitmap)!;
+        var expectedWidth = checked((int)glyphWidth * glyphCharacters.Length);
+        if (width != expectedWidth || height != glyphHeight)
+        {
+            (bitmap as IDisposable)?.Dispose();
+            throw new ArgumentException(
+                $"sprite sheet must be {expectedWidth}x{glyphHeight} pixels",
+                nameof(spriteSheet));
+        }
 
-            var spriteText = new SpriteText(
-                control,
-                bitmap,
-                checked((int)glyphWidth),
-                checked((int)glyphHeight),
-                glyphCharacters,
-                initialText);
-            SetProperty(control, "Text", string.Empty);
-            BindEvent(control, "Paint", spriteText, nameof(SpriteText.HandlePaint));
-            BindEvent(control, "Disposed", spriteText, nameof(SpriteText.HandleDisposed));
-            SpriteTexts.Add(control, spriteText);
-            Invoke(control, "Invalidate");
-            Invoke(control, "Update");
-            return true;
-        });
+        var spriteText = new SpriteText(
+            control,
+            bitmap,
+            checked((int)glyphWidth),
+            checked((int)glyphHeight),
+            glyphCharacters,
+            initialText);
+        SetProperty(control, "Text", string.Empty);
+        BindEvent(control, "Paint", spriteText, nameof(SpriteText.HandlePaint));
+        BindEvent(control, "Disposed", spriteText, nameof(SpriteText.HandleDisposed));
+        SpriteTexts.Add(control, spriteText);
+        Invoke(control, "Invalidate");
+        Invoke(control, "Update");
     }
 
     public static void SetSpriteText(object control, string text)
@@ -255,37 +255,29 @@ public static class PdVmWinFormsVisuals
             throw new InvalidOperationException("control is not configured for sprite text");
         }
 
-        PdVmWinFormsDispatcher.Invoke(() =>
-        {
-            spriteText.SetText(text);
-            Invoke(control, "Invalidate");
-            Invoke(control, "Update");
-            return true;
-        });
+        spriteText.SetText(text);
+        Invoke(control, "Invalidate");
+        Invoke(control, "Update");
     }
 
     public static void ShowMessage(object owner, string text, string caption)
     {
         ArgumentNullException.ThrowIfNull(text);
         ArgumentNullException.ThrowIfNull(caption);
-        PdVmWinFormsDispatcher.Invoke(() =>
-        {
-            var messageBox = Type.GetType(
-                "System.Windows.Forms.MessageBox, System.Windows.Forms",
-                throwOnError: true)!;
-            var ownerType = Type.GetType(
-                "System.Windows.Forms.IWin32Window, System.Windows.Forms",
-                throwOnError: true)!;
-            var show = messageBox.GetMethod(
-                "Show",
-                BindingFlags.Public | BindingFlags.Static,
-                binder: null,
-                types: [ownerType, typeof(string), typeof(string)],
-                modifiers: null) ?? throw new InvalidOperationException(
-                    "System.Windows.Forms.MessageBox does not expose Show(owner, text, caption)");
-            _ = show.Invoke(null, [owner, text, caption]);
-            return true;
-        });
+        var messageBox = Type.GetType(
+            "System.Windows.Forms.MessageBox, System.Windows.Forms",
+            throwOnError: true)!;
+        var ownerType = Type.GetType(
+            "System.Windows.Forms.IWin32Window, System.Windows.Forms",
+            throwOnError: true)!;
+        var show = messageBox.GetMethod(
+            "Show",
+            BindingFlags.Public | BindingFlags.Static,
+            binder: null,
+            types: [ownerType, typeof(string), typeof(string)],
+            modifiers: null) ?? throw new InvalidOperationException(
+                "System.Windows.Forms.MessageBox does not expose Show(owner, text, caption)");
+        _ = show.Invoke(null, [owner, text, caption]);
     }
 
     private static object DecodeBitmap(Type imageType, byte[] encodedBitmap)

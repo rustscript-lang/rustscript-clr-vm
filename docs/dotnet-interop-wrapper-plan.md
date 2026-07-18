@@ -4,7 +4,7 @@
 
 The typed wrapper pipeline is implemented in this repository. `PdVm.Runner compile-source` builds a temporary source overlay, generates concrete RustScript declarations for the selected profile, invokes the unmodified upstream compiler through the bundled native C ABI, remaps generated imports to versioned exact CLR descriptors, and lowers the result to CLR IL. The default runtime accepts these descriptors while name-based reflection requires the explicit experimental flag.
 
-The common profile preserves compact names for Console, Math, Path, File, and StringBuilder. The Windows-only `winforms` profile provides WinForms wrappers, a dedicated STA UI dispatcher, and a thin event queue bridge. RustScript owns UI behavior by waiting for queued named events in its own execution loop. In addition, the wrapper scans reachable `use System::...` imports and generates typed bindings from the resolved CLR type metadata.
+The common profile preserves compact names for Console, Math, Path, File, and StringBuilder. The Windows-only `winforms` profile provides WinForms wrappers and direct function-value event bindings. The Runner owns the calling STA thread and message loop; RustScript owns UI behavior through callable values passed to click, mouse, closing, and timer bindings. In addition, the wrapper scans reachable `use System::...` imports and generates typed bindings from the resolved CLR type metadata.
 
 ## Decision
 
@@ -165,9 +165,9 @@ Adding a profile entry requires a typed declaration golden test, an exact descri
 
 Windows Forms is a separate Windows-only profile loaded from `Microsoft.WindowsDesktop.App`.
 
-The supported surface includes constructors, primitive properties, control collections, dialogs, deterministic disposal, and the `EventLoop` bridge. The Runner uses STA for this profile.
+The supported surface includes constructors, primitive properties, control collections, dialogs, deterministic disposal, and the callable `EventLoop` bridge. The Runner uses its calling STA thread for this profile.
 
-All typed WinForms calls are marshaled onto one dedicated STA thread running the native Windows Forms message loop. `EventLoop` queues named CLR events while RustScript waits on its execution thread. It never re-enters a running generated method from a CLR callback: RustScript receives the next action only after `EventLoop::UiWait` returns, then executes its own handler code. Modal dialogs remain on the UI thread and inherit its PerMonitorV2 DPI context.
+Typed WinForms calls execute directly on the owning STA thread. `EventLoop` receives an RSS callable value as a typed host argument, converts payload-bearing UI events into immutable `map<string>` snapshots, and enqueues that callable through the Program FIFO gate. The form's `BeginInvoke` schedules queue draining after the current event returns, so generated code is never re-entered from a CLR event stack. Modal dialogs and callback-driven control updates remain on the same UI thread and inherit its PerMonitorV2 DPI context. There is no process-wide hidden form, dedicated UI thread, or polling `Wait` loop.
 
 ## Project layout
 

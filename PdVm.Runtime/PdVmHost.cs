@@ -72,4 +72,8 @@ public interface IPdVmHost
 public interface IAsyncPdVmHost : IPdVmHost
 {
     ValueTask<PdVmCallReturn> WaitAsync(ulong opId, CancellationToken cancellationToken = default);
+
+    void CancelPending(ulong opId)
+    {
+    }
 }
