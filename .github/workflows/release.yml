@@ -58,7 +58,7 @@ jobs:
 
       - name: Test managed projects
         shell: pwsh
-        run: dotnet test pd-vm-clr.sln --configuration Release --verbosity minimal
+        run: dotnet test IronRust.sln --configuration Release --verbosity minimal
 
       - name: Build release package
         shell: pwsh
