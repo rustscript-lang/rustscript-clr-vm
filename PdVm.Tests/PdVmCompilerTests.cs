@@ -64,6 +64,311 @@ public sealed class PdVmCompilerTests
     }
 
     [Fact]
+    public void ReadsV10CallableMetadataAndExportSchema()
+    {
+        var callableSchema = new PdVmTypeSchema(
+            PdVmTypeSchemaKind.Callable,
+            items: Array.Empty<PdVmTypeSchema>(),
+            result: new PdVmTypeSchema(PdVmTypeSchemaKind.Null));
+        var typeMap = new PdVmTypeMap(
+            [PdVmValueType.Callable],
+            new Dictionary<int, PdVmOperandTypes>(),
+            [callableSchema],
+            [true],
+            [false],
+            strictTypes: true);
+        var payload = EncodeVmbc(
+            Array.Empty<PdVmValue>(),
+            [(byte)PdVmBytecodeOpCode.Ret, (byte)PdVmBytecodeOpCode.Ret],
+            Array.Empty<PdVmHostImport>(),
+            typeMap,
+            writer =>
+            {
+                writer.Write((uint)1); // script functions
+                writer.Write((uint)1);
+                writer.Write((uint)2);
+
+                writer.Write((uint)1); // callable prototypes
+                writer.Write((byte)PdVmCallableKind.FunctionItem);
+                writer.Write((byte)PdVmCallableTargetKind.ScriptFunction);
+                writer.Write((uint)0);
+                writer.Write((byte)0);
+                writer.Write((uint)1);
+                writer.Write((uint)0); // parameters
+                writer.Write((uint)0); // capture sources
+                writer.Write((uint)0); // capture targets
+                writer.Write((uint)0); // capture modes
+                writer.Write((byte)0); // self slot
+                writer.Write((byte)1); // schema
+                WriteSchema(writer, callableSchema);
+
+                writer.Write((uint)2); // function regions
+                writer.Write((uint)0);
+                writer.Write((uint)1);
+                writer.Write((byte)0);
+                writer.Write((uint)1);
+                writer.Write((uint)2);
+                writer.Write((byte)1);
+                writer.Write((uint)0);
+
+                writer.Write((uint)1); // root callable bindings
+                writer.Write((ushort)0);
+                writer.Write((uint)0);
+
+                writer.Write((uint)1); // exported callables
+                WriteString(writer, "on_click");
+                writer.Write((ushort)0);
+            });
+
+        var model = PdVmVmbcReader.ReadBytes(payload);
+
+        var prototype = Assert.Single(model.CallablePrototypes);
+        Assert.Equal(PdVmCallableTargetKind.ScriptFunction, prototype.Target.Kind);
+        Assert.Equal(PdVmTypeSchemaKind.Callable, prototype.Schema?.Kind);
+        Assert.Equal(PdVmTypeSchemaKind.Null, prototype.Schema?.Result?.Kind);
+        Assert.Equal("on_click", Assert.Single(model.ExportedCallables).Name);
+        Assert.Equal(2, model.FunctionRegions.Count);
+        Assert.True(Assert.Single(model.TypeMap!.CallableSlots));
+    }
+
+    [Fact]
+    public void ExecutesMoveCaptureAndDetachLocalContract()
+    {
+        var builder = new BytecodeBuilder()
+            .EmitLdc(0)
+            .EmitStloc(0)
+            .EmitLdc(1)
+            .EmitCall(PdVmBuiltins.GetCallIndex(PdVmBuiltin.ArrayNew), 0)
+            .EmitLdloc(0)
+            .EmitCall(PdVmBuiltins.GetCallIndex(PdVmBuiltin.ArrayPush), 2)
+            .EmitCall(PdVmBuiltins.GetCallIndex(PdVmBuiltin.BindCallable), 2)
+            .EmitStloc(1)
+            .EmitLdc(2)
+            .EmitCall(PdVmBuiltins.GetCallIndex(PdVmBuiltin.DetachLocal), 1)
+            .EmitLdloc(1)
+            .EmitCallValue(0)
+            .Emit(PdVmBytecodeOpCode.Ret);
+        var rootEnd = builder.Position;
+        builder.EmitLdloc(2).Emit(PdVmBytecodeOpCode.Ret);
+        var functionEnd = builder.Position;
+        var typeMap = new PdVmTypeMap(
+            [PdVmValueType.Array, PdVmValueType.Callable, PdVmValueType.Array],
+            new Dictionary<int, PdVmOperandTypes>(),
+            [null, null, null],
+            [false, true, false],
+            [false, false, false],
+            strictTypes: true);
+        var artifact = CompileProgramArtifact(
+            [
+                PdVmValue.FromArray([PdVmValue.FromInt(1), PdVmValue.FromInt(2)]),
+                PdVmValue.FromInt(0),
+                PdVmValue.FromInt(0),
+            ],
+            builder.Build(),
+            typeMap: typeMap,
+            writeCallableMetadata: writer =>
+            {
+                writer.Write((uint)1); // script functions
+                writer.Write((uint)rootEnd);
+                writer.Write((uint)functionEnd);
+
+                writer.Write((uint)1); // callable prototypes
+                writer.Write((byte)PdVmCallableKind.Closure);
+                writer.Write((byte)PdVmCallableTargetKind.ScriptFunction);
+                writer.Write((uint)0);
+                writer.Write((byte)0);
+                writer.Write((uint)3);
+                writer.Write((uint)0); // parameters
+                writer.Write((uint)1); // capture sources
+                writer.Write((ushort)0);
+                writer.Write((uint)1); // capture targets
+                writer.Write((ushort)2);
+                writer.Write((uint)1); // capture modes
+                writer.Write((byte)PdVmCaptureBindingMode.Move);
+                writer.Write((byte)0); // self slot
+                writer.Write((byte)0); // schema
+
+                writer.Write((uint)2); // function regions
+                writer.Write((uint)0);
+                writer.Write((uint)rootEnd);
+                writer.Write((byte)0);
+                writer.Write((uint)rootEnd);
+                writer.Write((uint)functionEnd);
+                writer.Write((byte)1);
+                writer.Write((uint)0);
+
+                writer.Write((uint)0); // root callable bindings
+                writer.Write((uint)0); // exported callables
+            });
+
+        var result = PdVmExecution.Run(artifact.Program, new PdVmDelegateHost());
+
+        Assert.Equal(PdVmStatusKind.Halted, result.Status.Kind);
+        Assert.Equal(PdVmValueKind.Null, artifact.Program.Locals[0].Kind);
+        Assert.Equal(
+            [1L, 2L],
+            Assert.Single(artifact.Program.Stack).AsArray().Select(value => value.AsInt()));
+    }
+
+    [Theory]
+    [InlineData(8)]
+    [InlineData(9)]
+    public void RejectsPreV10PayloadsWithPreciseVersion(int version)
+    {
+        var payload = EncodeVmbc(
+            Array.Empty<PdVmValue>(),
+            [(byte)PdVmBytecodeOpCode.Ret],
+            Array.Empty<PdVmHostImport>());
+        payload[4] = checked((byte)version);
+        payload[5] = 0;
+
+        var error = Assert.Throws<PdVmCompilerException>(() => PdVmVmbcReader.ReadBytes(payload));
+
+        Assert.Equal($"unsupported VMBC version {version}, expected 10", error.Message);
+    }
+
+    [Fact]
+    public void RejectsCallableRegionGapBeforeAssemblyGeneration()
+    {
+        var payload = EncodeVmbc(
+            Array.Empty<PdVmValue>(),
+            [
+                (byte)PdVmBytecodeOpCode.Ret,
+                (byte)PdVmBytecodeOpCode.Ret,
+                (byte)PdVmBytecodeOpCode.Ret,
+            ],
+            Array.Empty<PdVmHostImport>(),
+            writeCallableMetadata: writer =>
+            {
+                writer.Write((uint)0); // script functions
+                writer.Write((uint)0); // callable prototypes
+                writer.Write((uint)2); // function regions
+                writer.Write((uint)0);
+                writer.Write((uint)1);
+                writer.Write((byte)0);
+                writer.Write((uint)2);
+                writer.Write((uint)3);
+                writer.Write((byte)0);
+                writer.Write((uint)0); // root callable bindings
+                writer.Write((uint)0); // exported callables
+            });
+
+        var error = Assert.Throws<PdVmCompilerException>(() => PdVmVmbcReader.ReadBytes(payload));
+
+        Assert.Contains("leave a gap", error.Message);
+    }
+
+    [Fact]
+    public void BuiltinCatalogIndexesRoundTripWithoutCollisions()
+    {
+        var builtins = Enum.GetValues<PdVmBuiltin>();
+        var indexes = builtins.Select(PdVmBuiltins.GetCallIndex).ToArray();
+
+        Assert.Equal(indexes.Length, indexes.Distinct().Count());
+        foreach (var builtin in builtins)
+        {
+            var index = PdVmBuiltins.GetCallIndex(builtin);
+            Assert.True(PdVmBuiltins.TryGetBuiltin(index, out var decoded));
+            Assert.Equal(builtin, decoded);
+            Assert.InRange(PdVmBuiltins.GetArity(builtin), (byte)0, (byte)3);
+        }
+
+        Assert.Equal(0xFFA3, PdVmBuiltins.BuiltinCallBase);
+        Assert.Equal(89, PdVmBuiltins.BuiltinCallCount);
+        Assert.Equal(0xFF95, PdVmBuiltins.GetCallIndex(PdVmBuiltin.BindCallable));
+        Assert.Equal(0xFF94, PdVmBuiltins.GetCallIndex(PdVmBuiltin.DetachLocal));
+    }
+
+    [Fact]
+    public void ImportRemapPreservesCallableMetadataObjects()
+    {
+        var method = typeof(Math).GetMethod(nameof(Math.Abs), [typeof(long)])!;
+        var descriptor = new PdVmDotNetBindingDescriptor(
+            method.DeclaringType!.Assembly.FullName!,
+            method.DeclaringType.Assembly.ManifestModule.ModuleVersionId,
+            method.DeclaringType.FullName!,
+            method.Name,
+            PdVmDotNetMemberKind.StaticMethod,
+            [typeof(long).AssemblyQualifiedName!],
+            typeof(long).AssemblyQualifiedName!);
+        var scriptFunctions = new[] { new PdVmScriptFunction(1, 2) };
+        var prototypes = new[]
+        {
+            new PdVmCallablePrototype(
+                PdVmCallableKind.FunctionItem,
+                new PdVmCallableTarget(PdVmCallableTargetKind.ScriptFunction, 0),
+                0,
+                1,
+                [],
+                [],
+                [],
+                [],
+                null,
+                null),
+        };
+        var regions = new[]
+        {
+            new PdVmFunctionRegion(0, 1, null),
+            new PdVmFunctionRegion(1, 2, 0),
+        };
+        var rootBindings = new[] { new PdVmRootCallableBinding(0, 0) };
+        var exports = new[] { new PdVmExportedCallable("run", 0) };
+        var model = new PdVmProgramModel(
+            [],
+            [(byte)PdVmBytecodeOpCode.Ret, (byte)PdVmBytecodeOpCode.Ret],
+            1,
+            [new PdVmHostImport("__clr_b_0", 1, PdVmValueType.Int)],
+            [
+                new PdVmInstruction(0, PdVmBytecodeOpCode.Ret, 1),
+                new PdVmInstruction(1, PdVmBytecodeOpCode.Ret, 2),
+            ],
+            scriptFunctions: scriptFunctions,
+            callablePrototypes: prototypes,
+            functionRegions: regions,
+            rootCallableBindings: rootBindings,
+            exportedCallables: exports);
+        var remap = typeof(PdVmDotNetSourceCompiler).GetMethod(
+            "RemapImports",
+            BindingFlags.Static | BindingFlags.NonPublic)!;
+
+        var remapped = Assert.IsType<PdVmProgramModel>(remap.Invoke(
+            null,
+            [model, new Dictionary<string, PdVmDotNetBindingDescriptor> { ["__clr_b_0"] = descriptor }]));
+
+        Assert.Equal(descriptor.EncodeImportName(), Assert.Single(remapped.Imports).Name);
+        Assert.Same(scriptFunctions, remapped.ScriptFunctions);
+        Assert.Same(prototypes, remapped.CallablePrototypes);
+        Assert.Same(regions, remapped.FunctionRegions);
+        Assert.Same(rootBindings, remapped.RootCallableBindings);
+        Assert.Same(exports, remapped.ExportedCallables);
+    }
+
+    [Fact]
+    public void ReadsAndEmitsNestedContainerConstants()
+    {
+        var constant = PdVmValue.FromArray(
+        [
+            PdVmValue.FromInt(1),
+            PdVmValue.FromMap(
+            [
+                new KeyValuePair<PdVmValue, PdVmValue>(
+                    PdVmValue.FromString("key"),
+                    PdVmValue.FromBool(true)),
+            ]),
+        ]);
+        var program = CompileProgram(
+            [constant],
+            new BytecodeBuilder()
+                .EmitLdc(0)
+                .Emit(PdVmBytecodeOpCode.Ret)
+                .Build());
+
+        _ = PdVmExecution.Run(program, new PdVmDelegateHost());
+
+        Assert.Equal(constant, Assert.Single(program.Stack));
+    }
+
+    [Fact]
     public void UsesTypedAddLoweringWhenOperandTypesAreKnown()
     {
         var builder = new BytecodeBuilder();
@@ -425,7 +730,7 @@ public sealed class PdVmCompilerTests
     }
 
     [Fact]
-    public void GeneratedProgramsShareOneRuntimeLocalArray()
+    public void GeneratedProgramsUseFrameRelativeRuntimeLocals()
     {
         var builder = new BytecodeBuilder();
         for (var index = 0; index < byte.MaxValue; index++)
@@ -455,7 +760,7 @@ public sealed class PdVmCompilerTests
         Assert.Equal(42, Assert.Single(artifact.Program.Stack).AsInt());
         Assert.Equal(byte.MaxValue, artifact.Program.Locals.Count);
         Assert.All(artifact.Program.Locals, value => Assert.Equal(42, value.AsInt()));
-        Assert.Single(generatedFields, field => field.FieldType == typeof(PdVmValue[]));
+        Assert.DoesNotContain(generatedFields, field => field.FieldType == typeof(PdVmValue[]));
         Assert.DoesNotContain(generatedFields, field => field.FieldType == typeof(PdVmValue));
         Assert.True(new FileInfo(artifact.AssemblyPath).Length < 256 * 1024);
     }
@@ -473,9 +778,15 @@ public sealed class PdVmCompilerTests
         IReadOnlyList<PdVmValue> constants,
         byte[] code,
         IReadOnlyList<PdVmHostImport>? imports = null,
-        PdVmTypeMap? typeMap = null)
+        PdVmTypeMap? typeMap = null,
+        Action<BinaryWriter>? writeCallableMetadata = null)
     {
-        var payload = EncodeVmbc(constants, code, imports ?? Array.Empty<PdVmHostImport>(), typeMap);
+        var payload = EncodeVmbc(
+            constants,
+            code,
+            imports ?? Array.Empty<PdVmHostImport>(),
+            typeMap,
+            writeCallableMetadata);
         var outputPath = Path.Combine(
             Path.GetTempPath(),
             "pd-vm-clr-tests",
@@ -497,13 +808,14 @@ public sealed class PdVmCompilerTests
         IReadOnlyList<PdVmValue> constants,
         byte[] code,
         IReadOnlyList<PdVmHostImport> imports,
-        PdVmTypeMap? typeMap = null)
+        PdVmTypeMap? typeMap = null,
+        Action<BinaryWriter>? writeCallableMetadata = null)
     {
         using var stream = new MemoryStream();
         using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
 
         writer.Write("VMBC"u8.ToArray());
-        writer.Write((ushort)8);
+        writer.Write((ushort)10);
         writer.Write((ushort)0);
         writer.Write((uint)constants.Count);
         foreach (var constant in constants)
@@ -523,6 +835,18 @@ public sealed class PdVmCompilerTests
 
         WriteTypeMap(writer, typeMap);
         writer.Write((byte)0);
+        if (writeCallableMetadata is null)
+        {
+            writer.Write((uint)0); // script functions
+            writer.Write((uint)0); // callable prototypes
+            writer.Write((uint)0); // function regions
+            writer.Write((uint)0); // root callable bindings
+            writer.Write((uint)0); // exported callables
+        }
+        else
+        {
+            writeCallableMetadata(writer);
+        }
         writer.Flush();
         return stream.ToArray();
     }
@@ -551,13 +875,30 @@ public sealed class PdVmCompilerTests
                 writer.Write(value.FloatValue);
                 return;
             case PdVmValueKind.Bytes:
-            {
-                writer.Write((byte)5);
-                var bytes = value.AsBytes();
-                writer.Write((uint)bytes.Length);
-                writer.Write(bytes);
+                {
+                    writer.Write((byte)5);
+                    var bytes = value.AsBytes();
+                    writer.Write((uint)bytes.Length);
+                    writer.Write(bytes);
+                    return;
+                }
+            case PdVmValueKind.Array:
+                writer.Write((byte)6);
+                writer.Write((uint)value.AsArray().Count);
+                foreach (var item in value.AsArray())
+                {
+                    WriteConstant(writer, item);
+                }
                 return;
-            }
+            case PdVmValueKind.Map:
+                writer.Write((byte)7);
+                writer.Write((uint)value.AsMap().Count);
+                foreach (var (key, item) in value.AsMap())
+                {
+                    WriteConstant(writer, key);
+                    WriteConstant(writer, item);
+                }
+                return;
             default:
                 throw new InvalidOperationException($"test constant kind {value.Kind} is not supported");
         }
@@ -579,28 +920,36 @@ public sealed class PdVmCompilerTests
         }
 
         writer.Write((byte)1);
-        writer.Write((byte)0);
+        writer.Write((byte)(typeMap.StrictTypes ? 1 : 0));
         writer.Write((uint)typeMap.LocalTypes.Count);
         foreach (var localType in typeMap.LocalTypes)
         {
             writer.Write((byte)localType);
         }
 
-        foreach (var _ in typeMap.LocalTypes)
+        foreach (var schema in typeMap.LocalSchemas)
         {
-            writer.Write((byte)0);
+            if (schema is null)
+            {
+                writer.Write((byte)0);
+            }
+            else
+            {
+                writer.Write((byte)1);
+                WriteSchema(writer, schema);
+            }
         }
 
         writer.Write((uint)typeMap.LocalTypes.Count);
-        foreach (var _ in typeMap.LocalTypes)
+        foreach (var value in typeMap.CallableSlots)
         {
-            writer.Write((byte)0);
+            writer.Write((byte)(value ? 1 : 0));
         }
 
         writer.Write((uint)typeMap.LocalTypes.Count);
-        foreach (var _ in typeMap.LocalTypes)
+        foreach (var value in typeMap.OptionalSlots)
         {
-            writer.Write((byte)0);
+            writer.Write((byte)(value ? 1 : 0));
         }
 
         writer.Write((uint)typeMap.OperandTypes.Count);
@@ -609,6 +958,65 @@ public sealed class PdVmCompilerTests
             writer.Write((uint)entry.Key);
             writer.Write((byte)entry.Value.Lhs);
             writer.Write((byte)entry.Value.Rhs);
+        }
+    }
+
+    private static void WriteSchema(BinaryWriter writer, PdVmTypeSchema schema)
+    {
+        writer.Write((byte)schema.Kind);
+        switch (schema.Kind)
+        {
+            case PdVmTypeSchemaKind.Unknown:
+            case PdVmTypeSchemaKind.Null:
+            case PdVmTypeSchemaKind.Int:
+            case PdVmTypeSchemaKind.Float:
+            case PdVmTypeSchemaKind.Number:
+            case PdVmTypeSchemaKind.Bool:
+            case PdVmTypeSchemaKind.String:
+            case PdVmTypeSchemaKind.Bytes:
+                return;
+            case PdVmTypeSchemaKind.GenericParameter:
+                WriteString(writer, schema.Name!);
+                return;
+            case PdVmTypeSchemaKind.Named:
+                WriteString(writer, schema.Name!);
+                WriteSchemaList(writer, schema.Items);
+                return;
+            case PdVmTypeSchemaKind.Array:
+            case PdVmTypeSchemaKind.Map:
+            case PdVmTypeSchemaKind.Optional:
+                WriteSchema(writer, schema.Element!);
+                return;
+            case PdVmTypeSchemaKind.ArrayTuple:
+                WriteSchemaList(writer, schema.Items);
+                return;
+            case PdVmTypeSchemaKind.ArrayTupleRest:
+                WriteSchemaList(writer, schema.Items);
+                WriteSchema(writer, schema.Element!);
+                return;
+            case PdVmTypeSchemaKind.Object:
+                writer.Write((uint)schema.Fields.Count);
+                foreach (var (name, value) in schema.Fields.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+                {
+                    WriteString(writer, name);
+                    WriteSchema(writer, value);
+                }
+                return;
+            case PdVmTypeSchemaKind.Callable:
+                WriteSchemaList(writer, schema.Items);
+                WriteSchema(writer, schema.Result!);
+                return;
+            default:
+                throw new InvalidOperationException($"unsupported schema kind {schema.Kind}");
+        }
+    }
+
+    private static void WriteSchemaList(BinaryWriter writer, IReadOnlyList<PdVmTypeSchema> schemas)
+    {
+        writer.Write((uint)schemas.Count);
+        foreach (var schema in schemas)
+        {
+            WriteSchema(writer, schema);
         }
     }
 
@@ -785,6 +1193,13 @@ public sealed class PdVmCompilerTests
         {
             _code.Add((byte)PdVmBytecodeOpCode.Call);
             _code.AddRange(BitConverter.GetBytes(callIndex));
+            _code.Add(argCount);
+            return this;
+        }
+
+        public BytecodeBuilder EmitCallValue(byte argCount)
+        {
+            _code.Add((byte)PdVmBytecodeOpCode.CallValue);
             _code.Add(argCount);
             return this;
         }

@@ -15,6 +15,7 @@ public enum PdVmValueKind
     Bytes = 5,
     Array = 6,
     Map = 7,
+    Callable = 8,
 }
 
 public sealed class PdVmMap : IEnumerable<KeyValuePair<PdVmValue, PdVmValue>>, IEquatable<PdVmMap>
@@ -119,6 +120,7 @@ public sealed class PdVmValueKeyComparer : IEqualityComparer<PdVmValue>
             PdVmValueKind.Bytes => x.BytesValue!.AsSpan().SequenceEqual(y.BytesValue),
             PdVmValueKind.Array => ReferenceEquals(x.ArrayValue, y.ArrayValue),
             PdVmValueKind.Map => ReferenceEquals(x.MapValue, y.MapValue),
+            PdVmValueKind.Callable => x.CallableValue!.Equals(y.CallableValue),
             _ => false,
         };
     }
@@ -153,6 +155,9 @@ public sealed class PdVmValueKeyComparer : IEqualityComparer<PdVmValue>
                 break;
             case PdVmValueKind.Map:
                 hash.Add(RuntimeHelpers.GetHashCode(obj.MapValue!));
+                break;
+            case PdVmValueKind.Callable:
+                hash.Add(obj.CallableValue);
                 break;
         }
 
@@ -221,6 +226,12 @@ public sealed class PdVmValue : IEquatable<PdVmValue>
         MapValue = value;
     }
 
+    private PdVmValue(PdVmCallableValue value)
+    {
+        Kind = PdVmValueKind.Callable;
+        CallableValue = value;
+    }
+
     public PdVmValueKind Kind { get; }
 
     public long IntValue { get; }
@@ -237,6 +248,8 @@ public sealed class PdVmValue : IEquatable<PdVmValue>
 
     public PdVmMap? MapValue { get; }
 
+    public PdVmCallableValue? CallableValue { get; }
+
     public PdVmValueType Type => Kind switch
     {
         PdVmValueKind.Null => PdVmValueType.Null,
@@ -247,6 +260,7 @@ public sealed class PdVmValue : IEquatable<PdVmValue>
         PdVmValueKind.Bytes => PdVmValueType.Bytes,
         PdVmValueKind.Array => PdVmValueType.Array,
         PdVmValueKind.Map => PdVmValueType.Map,
+        PdVmValueKind.Callable => PdVmValueType.Callable,
         _ => PdVmValueType.Unknown,
     };
 
@@ -266,6 +280,9 @@ public sealed class PdVmValue : IEquatable<PdVmValue>
     public static PdVmValue FromArray(IEnumerable<PdVmValue> value) => new(value.ToList());
 
     public static PdVmValue FromMap(IEnumerable<KeyValuePair<PdVmValue, PdVmValue>> value) => new(new PdVmMap(value));
+
+    public static PdVmValue FromCallable(PdVmCallableValue value) =>
+        new(value ?? throw new ArgumentNullException(nameof(value)));
 
     public long AsInt()
     {
@@ -337,6 +354,16 @@ public sealed class PdVmValue : IEquatable<PdVmValue>
         return MapValue;
     }
 
+    public PdVmCallableValue AsCallable()
+    {
+        if (Kind != PdVmValueKind.Callable || CallableValue is null)
+        {
+            throw new InvalidOperationException($"expected callable, got {Kind}");
+        }
+
+        return CallableValue;
+    }
+
     public bool Equals(PdVmValue? other)
     {
         if (other is null || Kind != other.Kind)
@@ -354,6 +381,7 @@ public sealed class PdVmValue : IEquatable<PdVmValue>
             PdVmValueKind.Bytes => BytesValue!.AsSpan().SequenceEqual(other.BytesValue),
             PdVmValueKind.Array => ArrayValue!.SequenceEqual(other.ArrayValue!),
             PdVmValueKind.Map => MapValue!.Equals(other.MapValue),
+            PdVmValueKind.Callable => CallableValue!.Equals(other.CallableValue),
             _ => false,
         };
     }
@@ -394,6 +422,9 @@ public sealed class PdVmValue : IEquatable<PdVmValue>
             case PdVmValueKind.Map:
                 hash.Add(MapValue);
                 break;
+            case PdVmValueKind.Callable:
+                hash.Add(CallableValue);
+                break;
         }
 
         return hash.ToHashCode();
@@ -413,6 +444,7 @@ public sealed class PdVmValue : IEquatable<PdVmValue>
             PdVmValueKind.Bytes => FormatBytes(value.AsBytes()),
             PdVmValueKind.Array => $"[{string.Join(", ", value.AsArray().Select(FormatDisplay))}]",
             PdVmValueKind.Map => $"{{{string.Join(", ", value.AsMap().Select(pair => $"{FormatDisplay(pair.Key)}: {FormatDisplay(pair.Value)}"))}}}",
+            PdVmValueKind.Callable => "callable",
             _ => value.Kind.ToString(),
         };
     }

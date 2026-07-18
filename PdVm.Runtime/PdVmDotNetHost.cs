@@ -145,11 +145,6 @@ public sealed class PdVmDotNetHost
         var type = assembly.GetType(descriptor.TypeName, throwOnError: true, ignoreCase: false)!;
         var parameterTypes = descriptor.ParameterTypeNames.Select(ResolveDescriptorType).ToArray();
 
-        if (RequiresWinFormsDispatcher(type, descriptor))
-        {
-            return PdVmWinFormsDispatcher.Invoke(() => CallExactResolved(descriptor, args, type, parameterTypes));
-        }
-
         return CallExactResolved(descriptor, args, type, parameterTypes);
     }
 
@@ -200,24 +195,6 @@ public sealed class PdVmDotNetHost
             _ => throw new InvalidOperationException(
                 $"unsupported exact CLR binding kind {descriptor.Kind}"),
         };
-    }
-
-    private static bool RequiresWinFormsDispatcher(Type type, PdVmDotNetBindingDescriptor descriptor)
-    {
-        if (!OperatingSystem.IsWindows())
-        {
-            return false;
-        }
-        if (string.Equals(type.Assembly.GetName().Name, "System.Windows.Forms", StringComparison.Ordinal))
-        {
-            return true;
-        }
-        if (type != typeof(PdVmWinFormsEventLoop))
-        {
-            return false;
-        }
-        return !string.Equals(descriptor.MemberName, nameof(PdVmWinFormsEventLoop.Wait), StringComparison.Ordinal) &&
-               !string.Equals(descriptor.MemberName, nameof(PdVmWinFormsEventLoop.WaitTimeout), StringComparison.Ordinal);
     }
 
     private PdVmValue InvokeExactMethod(
@@ -592,6 +569,12 @@ public sealed class PdVmDotNetHost
         if (targetType == typeof(PdVmValue))
         {
             converted = value;
+            score = 0;
+            return true;
+        }
+        if (targetType == typeof(PdVmCallableValue) && value.Kind == PdVmValueKind.Callable)
+        {
+            converted = value.AsCallable();
             score = 0;
             return true;
         }

@@ -9,4 +9,4 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-vm = { package = "pd-vm", git = "https://github.com/rustscript-lang/rustscript", rev = "1f3aaeec911781d3b5ed298754dc2597da38c7b2", default-features = false, features = ["http"] }
+vm = { package = "pd-vm", git = "https://github.com/rustscript-lang/rustscript", rev = "b3b481ef9ce72d07763ae6911746ae0c06b19228", default-features = false, features = ["runtime", "edge-abi"] }

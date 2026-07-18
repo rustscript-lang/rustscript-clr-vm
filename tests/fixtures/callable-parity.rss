@@ -1,0 +1,22 @@
+fn apply_twice(func, value: int) -> int {
+    let once = func(value);
+    func(once)
+}
+
+fn sum(value: int) -> int {
+    if value == 0 => { 0 } else => { sum(value - 1) + value }
+}
+
+fn even(value: int) -> int {
+    if value == 0 => { 1 } else => { odd(value - 1) }
+}
+
+fn odd(value: int) -> int {
+    if value == 0 => { 0 } else => { even(value - 1) }
+}
+
+let seed = 1;
+let inc = |value| value + seed;
+apply_twice(inc, 40);
+sum(5);
+even(10);

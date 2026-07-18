@@ -99,6 +99,17 @@ public enum PdVmBuiltin
     ToString,
     TypeOf,
     Assert,
+    StringContains,
+    StringReplaceLiteral,
+    StringLowerAscii,
+    StringSplitLiteral,
+    MapIterInit,
+    MapIterNext,
+    MapIterTakeKey,
+    MapIterTakeValue,
+    MapIterClose,
+    BindCallable,
+    DetachLocal,
 }
 
 public static class PdVmBuiltins
@@ -220,6 +231,70 @@ public static class PdVmBuiltins
     public static PdVmValue JsonDecodeValue(PdVmValue value) =>
         PdVmBuiltinJson.Decode(value.AsString());
 
+    public static PdVmValue StringContainsValue(PdVmValue text, PdVmValue needle) =>
+        PdVmValue.FromBool(text.AsString().Contains(needle.AsString(), StringComparison.Ordinal));
+
+    public static PdVmValue StringReplaceLiteralValue(
+        PdVmValue text,
+        PdVmValue needle,
+        PdVmValue replacement)
+    {
+        var input = text.AsString();
+        if (needle.Kind == PdVmValueKind.Array && replacement.Kind == PdVmValueKind.Array)
+        {
+            var needles = needle.AsArray();
+            var replacements = replacement.AsArray();
+            if (needles.Count != replacements.Count)
+            {
+                throw new InvalidOperationException(
+                    "string_replace_literal array lengths must match");
+            }
+
+            for (var index = 0; index < needles.Count; index++)
+            {
+                var currentNeedle = needles[index].AsString();
+                if (currentNeedle.Length != 0)
+                {
+                    input = input.Replace(
+                        currentNeedle,
+                        replacements[index].AsString(),
+                        StringComparison.Ordinal);
+                }
+            }
+
+            return PdVmValue.FromString(input);
+        }
+
+        var literal = needle.AsString();
+        return PdVmValue.FromString(
+            literal.Length == 0
+                ? input
+                : input.Replace(literal, replacement.AsString(), StringComparison.Ordinal));
+    }
+
+    public static PdVmValue StringLowerAsciiValue(PdVmValue text)
+    {
+        var input = text.AsString();
+        var output = new StringBuilder(input.Length);
+        foreach (var character in input)
+        {
+            output.Append(character is >= 'A' and <= 'Z' ? (char)(character + ('a' - 'A')) : character);
+        }
+
+        return PdVmValue.FromString(output.ToString());
+    }
+
+    public static PdVmValue StringSplitLiteralValue(PdVmValue text, PdVmValue delimiter)
+    {
+        var separator = delimiter.AsString();
+        return PdVmValue.FromArray(
+            separator.Length == 0
+                ? new[] { PdVmValue.FromString(text.AsString()) }
+                : text.AsString()
+                    .Split([separator], StringSplitOptions.None)
+                    .Select(PdVmValue.FromString));
+    }
+
     public static ushort GetCallIndex(PdVmBuiltin builtin)
     {
         return builtin switch
@@ -228,6 +303,17 @@ public static class PdVmBuiltins
             PdVmBuiltin.ToString => (ushort)(BuiltinCallBase - 3),
             PdVmBuiltin.TypeOf => (ushort)(BuiltinCallBase - 2),
             PdVmBuiltin.Assert => (ushort)(BuiltinCallBase - 1),
+            PdVmBuiltin.StringContains => (ushort)(BuiltinCallBase - 7),
+            PdVmBuiltin.StringReplaceLiteral => (ushort)(BuiltinCallBase - 6),
+            PdVmBuiltin.StringLowerAscii => (ushort)(BuiltinCallBase - 5),
+            PdVmBuiltin.StringSplitLiteral => (ushort)(BuiltinCallBase - 8),
+            PdVmBuiltin.MapIterInit => (ushort)(BuiltinCallBase - 9),
+            PdVmBuiltin.MapIterNext => (ushort)(BuiltinCallBase - 10),
+            PdVmBuiltin.MapIterTakeKey => (ushort)(BuiltinCallBase - 11),
+            PdVmBuiltin.MapIterTakeValue => (ushort)(BuiltinCallBase - 12),
+            PdVmBuiltin.MapIterClose => (ushort)(BuiltinCallBase - 13),
+            PdVmBuiltin.BindCallable => (ushort)(BuiltinCallBase - 14),
+            PdVmBuiltin.DetachLocal => (ushort)(BuiltinCallBase - 15),
             _ when builtin <= PdVmBuiltin.Count => (ushort)(BuiltinCallBase + (ushort)builtin),
             _ => throw new ArgumentOutOfRangeException(nameof(builtin)),
         };
@@ -302,7 +388,12 @@ public static class PdVmBuiltins
                 or PdVmBuiltin.Count
                 or PdVmBuiltin.ToString
                 or PdVmBuiltin.TypeOf
-                or PdVmBuiltin.Assert => 1,
+                or PdVmBuiltin.Assert
+                or PdVmBuiltin.StringLowerAscii
+                or PdVmBuiltin.MapIterNext
+                or PdVmBuiltin.MapIterTakeKey
+                or PdVmBuiltin.MapIterTakeValue
+                or PdVmBuiltin.DetachLocal => 1,
             PdVmBuiltin.Concat
                 or PdVmBuiltin.ArrayPush
                 or PdVmBuiltin.Get
@@ -322,20 +413,26 @@ public static class PdVmBuiltins
                 or PdVmBuiltin.MathMin
                 or PdVmBuiltin.MathMax
                 or PdVmBuiltin.MathCopySign
-                or PdVmBuiltin.FormatTemplate => 2,
+                or PdVmBuiltin.FormatTemplate
+                or PdVmBuiltin.StringContains
+                or PdVmBuiltin.StringSplitLiteral
+                or PdVmBuiltin.MapIterInit
+                or PdVmBuiltin.MapIterClose
+                or PdVmBuiltin.BindCallable => 2,
             PdVmBuiltin.Slice
                 or PdVmBuiltin.Set
                 or PdVmBuiltin.ReReplace
                 or PdVmBuiltin.JitSetConfig
                 or PdVmBuiltin.MathClamp
-                or PdVmBuiltin.MathMulAdd => 3,
+                or PdVmBuiltin.MathMulAdd
+                or PdVmBuiltin.StringReplaceLiteral => 3,
             _ => throw new ArgumentOutOfRangeException(nameof(builtin)),
         };
     }
 
     public static bool IsBuiltinIndex(ushort callIndex)
     {
-        var specialStart = BuiltinCallBase - 4;
+        var specialStart = BuiltinCallBase - 15;
         var mainEnd = BuiltinCallBase + BuiltinCallCount - 1;
         return callIndex >= specialStart && callIndex <= mainEnd;
     }
@@ -355,6 +452,39 @@ public static class PdVmBuiltins
                 return true;
             case var index when index == BuiltinCallBase - 1:
                 builtin = PdVmBuiltin.Assert;
+                return true;
+            case var index when index == BuiltinCallBase - 7:
+                builtin = PdVmBuiltin.StringContains;
+                return true;
+            case var index when index == BuiltinCallBase - 6:
+                builtin = PdVmBuiltin.StringReplaceLiteral;
+                return true;
+            case var index when index == BuiltinCallBase - 5:
+                builtin = PdVmBuiltin.StringLowerAscii;
+                return true;
+            case var index when index == BuiltinCallBase - 8:
+                builtin = PdVmBuiltin.StringSplitLiteral;
+                return true;
+            case var index when index == BuiltinCallBase - 9:
+                builtin = PdVmBuiltin.MapIterInit;
+                return true;
+            case var index when index == BuiltinCallBase - 10:
+                builtin = PdVmBuiltin.MapIterNext;
+                return true;
+            case var index when index == BuiltinCallBase - 11:
+                builtin = PdVmBuiltin.MapIterTakeKey;
+                return true;
+            case var index when index == BuiltinCallBase - 12:
+                builtin = PdVmBuiltin.MapIterTakeValue;
+                return true;
+            case var index when index == BuiltinCallBase - 13:
+                builtin = PdVmBuiltin.MapIterClose;
+                return true;
+            case var index when index == BuiltinCallBase - 14:
+                builtin = PdVmBuiltin.BindCallable;
+                return true;
+            case var index when index == BuiltinCallBase - 15:
+                builtin = PdVmBuiltin.DetachLocal;
                 return true;
         }
 
@@ -419,6 +549,21 @@ public static class PdVmBuiltins
             PdVmBuiltin.ToString => ReturnOne(ToStringValue(GetArg(args, 0))),
             PdVmBuiltin.TypeOf => ReturnOne(TypeOfValue(GetArg(args, 0))),
             PdVmBuiltin.Assert => DispatchAssert(args),
+            PdVmBuiltin.StringContains => ReturnOne(
+                StringContainsValue(GetArg(args, 0), GetArg(args, 1))),
+            PdVmBuiltin.StringReplaceLiteral => ReturnOne(
+                StringReplaceLiteralValue(GetArg(args, 0), GetArg(args, 1), GetArg(args, 2))),
+            PdVmBuiltin.StringLowerAscii => ReturnOne(StringLowerAsciiValue(GetArg(args, 0))),
+            PdVmBuiltin.StringSplitLiteral => ReturnOne(
+                StringSplitLiteralValue(GetArg(args, 0), GetArg(args, 1))),
+            PdVmBuiltin.MapIterInit
+                or PdVmBuiltin.MapIterNext
+                or PdVmBuiltin.MapIterTakeKey
+                or PdVmBuiltin.MapIterTakeValue
+                or PdVmBuiltin.MapIterClose
+                or PdVmBuiltin.BindCallable
+                or PdVmBuiltin.DetachLocal => throw new NotSupportedException(
+                    $"builtin {builtin} requires the VMBC v10 callable runtime"),
             PdVmBuiltin.JitSetConfig
                 or PdVmBuiltin.JitGetConfig
                 or PdVmBuiltin.JitSetEnabled

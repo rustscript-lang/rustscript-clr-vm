@@ -97,9 +97,10 @@ dotnet run --project PdVm.Runner -- run artifacts\dotnet-typed-console.dll
 ```powershell
 dotnet run --project PdVm.Runner -- run examples\dotnet-typed-console.rss
 dotnet run --project PdVm.Runner -- run examples\dotnet-typed-winforms.rss --profile winforms
+dotnet run --project PdVm.Runner -- run examples\dotnet-minesweeper.rss --profile winforms
 ```
 
-`dotnet-typed-winforms.rss` is a Notepad-style Windows application written in RustScript. It creates the form, menus, editor, dialogs, file actions, font and color actions, word-wrap action, and status bar in `.rss`. The typed Windows Forms profile supplies CLR bindings, a dedicated STA dispatcher, and a thin event queue; it does not contain application behavior.
+`dotnet-typed-winforms.rss` is a Notepad-style Windows application, and `dotnet-minesweeper.rss` is a callback-driven game with independent click, mouse-down, mouse-up, double-click, mouse-leave, closing, and timer handlers. Both are written in RustScript. The Runner owns the calling STA thread and native message loop. `EventLoop` accepts RSS function values directly at each binding and schedules them through the form after the current UI event returns; no hidden dispatcher window or second UI thread is created.
 
 The `winforms` profile includes the common profile and the initial Windows Forms surface:
 
@@ -108,7 +109,7 @@ dotnet run --project PdVm.Runner -- compile-source `
   examples\dotnet-typed-winforms.rss `
   artifacts\dotnet-typed-winforms.dll `
   --profile winforms
-dotnet run --project PdVm.Runner -- run artifacts\dotnet-typed-winforms.dll
+dotnet run --project PdVm.Runner -- run artifacts\dotnet-typed-winforms.dll --profile winforms
 ```
 
 `--pd-vm-library <path>` selects an explicit native compiler library; `--source-root <path>` sets the module-tree root. By default the native library is loaded beside the Runner. Typed imports carry exact CLR assembly, module, type, member, parameter, and return identities. Name-based dynamic reflection remains behind `--enable-dynamic-dotnet`.

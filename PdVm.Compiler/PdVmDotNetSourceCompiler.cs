@@ -47,6 +47,7 @@ public static class PdVmDotNetSourceCompiler
         string SourcePath,
         int Line,
         string Path,
+        string Alias,
         MemberUse[] UsedMembers)
     {
         public string TypeName => Path.Replace("::", ".", StringComparison.Ordinal);
@@ -100,6 +101,7 @@ public static class PdVmDotNetSourceCompiler
             CopySourceOverlay(sourceRoot, temporaryRoot);
             var bindings = BuildBindings(resolvedImports);
             var importMap = WriteBindingModules(temporaryRoot, bindings);
+            RewriteSystemMemberReferences(temporaryRoot, systemImports, bindings);
             var relativeSource = Path.GetRelativePath(sourceRoot, fullSourcePath);
             var overlaySource = Path.Combine(temporaryRoot, relativeSource);
             var vmbc = PdVmNativeCompiler.CompileFile(
@@ -201,6 +203,7 @@ public static class PdVmDotNetSourceCompiler
                     Path.GetRelativePath(sourceRoot, sourcePath),
                     line,
                     path,
+                    alias,
                     usedMembers));
             }
 
@@ -517,12 +520,15 @@ public static class PdVmDotNetSourceCompiler
         }
         for (var index = 0; index < clrParameters.Length; index++)
         {
-            if (clrParameters[index].IsOut || !TryGetSchema(clrParameters[index].ParameterType, out var schema))
+            var parameter = clrParameters[index];
+            var schemaOverride = parameter.GetCustomAttribute<PdVmInteropSchemaAttribute>()?.Schema;
+            if (parameter.IsOut ||
+                (schemaOverride is null && !TryGetSchema(parameter.ParameterType, out schemaOverride)))
             {
                 parameters = [];
                 return false;
             }
-            generated.Add(($"arg{index}", schema));
+            generated.Add(($"arg{index}", schemaOverride));
         }
         parameters = generated.ToArray();
         return true;
@@ -675,6 +681,162 @@ public static class PdVmDotNetSourceCompiler
         return importMap;
     }
 
+    private static void RewriteSystemMemberReferences(
+        string root,
+        IReadOnlyList<SystemImport> imports,
+        IReadOnlyList<Binding> bindings)
+    {
+        var internalNames = bindings.ToDictionary(
+            binding => (binding.ModulePath, binding.PublicName),
+            binding => InternalName(CreateDescriptor(binding)));
+        foreach (var sourceGroup in imports.GroupBy(item => item.SourcePath, StringComparer.Ordinal))
+        {
+            var replacements = new Dictionary<(string Alias, string Member), string>();
+            foreach (var import in sourceGroup)
+            {
+                foreach (var member in import.UsedMembers)
+                {
+                    if (!internalNames.TryGetValue((import.ModulePath, member.Name), out var internalName))
+                    {
+                        throw new PdVmCompilerException(
+                            $"CLR metadata call at {import.SourcePath}:{member.Line}: " +
+                            $"generated binding '{import.Alias}::{member.Name}' was not found");
+                    }
+
+                    replacements[(import.Alias, member.Name)] = internalName;
+                }
+            }
+
+            if (replacements.Count == 0)
+            {
+                continue;
+            }
+
+            var sourcePath = Path.Combine(root, sourceGroup.Key);
+            var source = File.ReadAllText(sourcePath);
+            var rewritten = RewriteQualifiedMemberNames(source, replacements);
+            if (!string.Equals(source, rewritten, StringComparison.Ordinal))
+            {
+                File.WriteAllText(
+                    sourcePath,
+                    rewritten,
+                    new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            }
+        }
+    }
+
+    private static string RewriteQualifiedMemberNames(
+        string source,
+        IReadOnlyDictionary<(string Alias, string Member), string> replacements)
+    {
+        var rewritten = new StringBuilder(source.Length);
+        for (var index = 0; index < source.Length;)
+        {
+            if (source[index] is '"' or '\'')
+            {
+                var quote = source[index];
+                rewritten.Append(quote);
+                index++;
+                while (index < source.Length)
+                {
+                    var current = source[index++];
+                    rewritten.Append(current);
+                    if (current == '\\' && index < source.Length)
+                    {
+                        rewritten.Append(source[index++]);
+                    }
+                    else if (current == quote)
+                    {
+                        break;
+                    }
+                }
+                continue;
+            }
+
+            if (source[index] == '/' && index + 1 < source.Length && source[index + 1] == '/')
+            {
+                var end = source.IndexOf('\n', index + 2);
+                if (end < 0)
+                {
+                    rewritten.Append(source, index, source.Length - index);
+                    break;
+                }
+
+                rewritten.Append(source, index, end + 1 - index);
+                index = end + 1;
+                continue;
+            }
+
+            if (source[index] == '/' && index + 1 < source.Length && source[index + 1] == '*')
+            {
+                var depth = 1;
+                var end = index + 2;
+                while (end < source.Length && depth > 0)
+                {
+                    if (end + 1 < source.Length && source[end] == '/' && source[end + 1] == '*')
+                    {
+                        depth++;
+                        end += 2;
+                    }
+                    else if (end + 1 < source.Length && source[end] == '*' && source[end + 1] == '/')
+                    {
+                        depth--;
+                        end += 2;
+                    }
+                    else
+                    {
+                        end++;
+                    }
+                }
+
+                rewritten.Append(source, index, end - index);
+                index = end;
+                continue;
+            }
+
+            if (source[index] == '_' || char.IsAsciiLetter(source[index]))
+            {
+                var aliasStart = index;
+                index++;
+                while (index < source.Length &&
+                       (source[index] == '_' || char.IsAsciiLetterOrDigit(source[index])))
+                {
+                    index++;
+                }
+
+                var alias = source[aliasStart..index];
+                if (index + 2 < source.Length &&
+                    source[index] == ':' &&
+                    source[index + 1] == ':' &&
+                    (source[index + 2] == '_' || char.IsAsciiLetter(source[index + 2])))
+                {
+                    var memberStart = index + 2;
+                    var memberEnd = memberStart + 1;
+                    while (memberEnd < source.Length &&
+                           (source[memberEnd] == '_' || char.IsAsciiLetterOrDigit(source[memberEnd])))
+                    {
+                        memberEnd++;
+                    }
+
+                    var member = source[memberStart..memberEnd];
+                    if (replacements.TryGetValue((alias, member), out var replacement))
+                    {
+                        rewritten.Append(alias).Append("::").Append(replacement);
+                        index = memberEnd;
+                        continue;
+                    }
+                }
+
+                rewritten.Append(source, aliasStart, index - aliasStart);
+                continue;
+            }
+
+            rewritten.Append(source[index++]);
+        }
+
+        return rewritten.ToString();
+    }
+
     private static void ValidateBinding(Binding binding)
     {
         _ = (object)(binding.Kind switch
@@ -738,21 +900,9 @@ public static class PdVmDotNetSourceCompiler
     private static void EmitBinding(StringBuilder source, Binding binding, string internalName)
     {
         var parameters = string.Join(", ", binding.Parameters.Select(item => $"{item.Name}: {item.Schema}"));
-        var arguments = string.Join(", ", binding.Parameters.Select(item => item.Name));
         source.Append("pub fn ").Append(internalName).Append('(').Append(parameters).Append(')')
             .Append(" -> ").Append(binding.ReturnSchema).AppendLine(";");
-        source.Append("pub fn ").Append(binding.PublicName).Append('(').Append(parameters).Append(')')
-            .Append(" -> ").Append(binding.ReturnSchema).AppendLine(" {");
-        source.Append("    ");
-        if (binding.ReturnSchema == "null")
-        {
-            source.Append(internalName).Append('(').Append(arguments).AppendLine(");");
-        }
-        else
-        {
-            source.Append(internalName).Append('(').Append(arguments).AppendLine(")");
-        }
-        source.AppendLine("}").AppendLine();
+        source.AppendLine();
     }
 
     private static PdVmProgramModel RemapImports(
@@ -777,7 +927,12 @@ public static class PdVmDotNetSourceCompiler
             model.LocalCount,
             imports,
             model.Instructions,
-            model.TypeMap);
+            model.TypeMap,
+            model.ScriptFunctions,
+            model.CallablePrototypes,
+            model.FunctionRegions,
+            model.RootCallableBindings,
+            model.ExportedCallables);
     }
 
     private static void CopySourceOverlay(string sourceRoot, string destinationRoot)

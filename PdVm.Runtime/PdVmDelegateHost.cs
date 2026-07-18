@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+
 namespace PdVm.Runtime;
 
 public sealed class PdVmDelegateHost : IAsyncPdVmHost
@@ -6,9 +8,13 @@ public sealed class PdVmDelegateHost : IAsyncPdVmHost
         new(StringComparer.Ordinal);
     private readonly Dictionary<string, Func<IReadOnlyList<PdVmValue>, CancellationToken, ValueTask<PdVmCallReturn>>> _asyncHandlers =
         new(StringComparer.Ordinal);
-    private readonly Dictionary<ulong, Task<PdVmCallReturn>> _pendingOperations = new();
+    private readonly ConcurrentDictionary<ulong, PendingOperation> _pendingOperations = new();
     private Func<string, IReadOnlyList<PdVmValue>, PdVmCallOutcome>? _fallback;
     private long _nextOpId;
+
+    private sealed record PendingOperation(
+        Task<PdVmCallReturn> Task,
+        CancellationTokenSource Cancellation);
 
     public void Register(string name, Func<IReadOnlyList<PdVmValue>, PdVmCallOutcome> handler)
     {
@@ -56,7 +62,17 @@ public sealed class PdVmDelegateHost : IAsyncPdVmHost
         if (_asyncHandlers.TryGetValue(name, out var asyncHandler))
         {
             var opId = (ulong)Interlocked.Increment(ref _nextOpId);
-            _pendingOperations[opId] = asyncHandler(args, CancellationToken.None).AsTask();
+            var cancellation = new CancellationTokenSource();
+            var operation = new PendingOperation(
+                asyncHandler(args, cancellation.Token).AsTask(),
+                cancellation);
+            if (!_pendingOperations.TryAdd(opId, operation))
+            {
+                cancellation.Cancel();
+                cancellation.Dispose();
+                throw new InvalidOperationException($"duplicate pending host operation {opId}");
+            }
+
             return PdVmCallOutcome.Pending(opId);
         }
 
@@ -70,11 +86,30 @@ public sealed class PdVmDelegateHost : IAsyncPdVmHost
 
     public async ValueTask<PdVmCallReturn> WaitAsync(ulong opId, CancellationToken cancellationToken = default)
     {
-        if (!_pendingOperations.Remove(opId, out var operation))
+        if (!_pendingOperations.TryGetValue(opId, out var operation))
         {
             throw new InvalidOperationException($"unknown pending host operation {opId}");
         }
 
-        return await operation.WaitAsync(cancellationToken);
+        try
+        {
+            return await operation.Task.WaitAsync(cancellationToken);
+        }
+        finally
+        {
+            if (_pendingOperations.TryRemove(opId, out var removed))
+            {
+                removed.Cancellation.Dispose();
+            }
+        }
+    }
+
+    public void CancelPending(ulong opId)
+    {
+        if (_pendingOperations.TryRemove(opId, out var operation))
+        {
+            operation.Cancellation.Cancel();
+            operation.Cancellation.Dispose();
+        }
     }
 }

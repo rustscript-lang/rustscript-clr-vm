@@ -420,14 +420,11 @@ public static class PdVmWinFormsScene
     {
         ArgumentNullException.ThrowIfNull(control);
         ArgumentNullException.ThrowIfNull(font);
-        return PdVmWinFormsDispatcher.Invoke(() =>
-        {
-            var surface = new Surface(control, font);
-            BindEvent(control, "Paint", surface, nameof(Surface.HandlePaint));
-            BindEvent(control, "Disposed", surface, nameof(Surface.HandleDisposed));
-            Surfaces.Add(control, surface);
-            return control;
-        });
+        var surface = new Surface(control, font);
+        BindEvent(control, "Paint", surface, nameof(Surface.HandlePaint));
+        BindEvent(control, "Disposed", surface, nameof(Surface.HandleDisposed));
+        Surfaces.Add(control, surface);
+        return control;
     }
 
     public static void ConfigureStyles(
@@ -440,21 +437,13 @@ public static class PdVmWinFormsScene
         long[] imageIds)
     {
         var surface = GetSurface(handle);
-        PdVmWinFormsDispatcher.Invoke(() =>
-        {
-            surface.ConfigureStyles(borderKinds, backgrounds, borderColors, foregrounds, texts, imageIds);
-            return true;
-        });
+        surface.ConfigureStyles(borderKinds, backgrounds, borderColors, foregrounds, texts, imageIds);
     }
 
     public static void SetImage(object handle, long id, byte[] encodedImage)
     {
         var surface = GetSurface(handle);
-        PdVmWinFormsDispatcher.Invoke(() =>
-        {
-            surface.SetImage(checked((int)id), encodedImage);
-            return true;
-        });
+        surface.SetImage(checked((int)id), encodedImage);
     }
 
     public static void SetNodes(
@@ -465,21 +454,13 @@ public static class PdVmWinFormsScene
         long[] heights)
     {
         var surface = GetSurface(handle);
-        PdVmWinFormsDispatcher.Invoke(() =>
-        {
-            surface.SetNodes(lefts, tops, widths, heights);
-            return true;
-        });
+        surface.SetNodes(lefts, tops, widths, heights);
     }
 
     public static long[] Present(object handle, long[] styleIndices)
     {
         var surface = GetSurface(handle);
-        PdVmWinFormsDispatcher.Invoke(() =>
-        {
-            surface.Present(styleIndices);
-            return true;
-        });
+        surface.Present(styleIndices);
         return styleIndices;
     }
 

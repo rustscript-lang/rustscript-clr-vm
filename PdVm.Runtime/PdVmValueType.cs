@@ -11,4 +11,5 @@ public enum PdVmValueType : byte
     Bytes = 6,
     Array = 7,
     Map = 8,
+    Callable = 9,
 }

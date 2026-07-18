@@ -33,7 +33,9 @@ pub extern "C" fn pdvm_compile_file_utf8(
             .map_err(|error| (STATUS_INVALID_ARGUMENT, error.to_string()))?;
         let compiled = vm::compile_source_file(Path::new(path_text))
             .map_err(|error| (STATUS_COMPILE_ERROR, error.to_string()))?;
-        vmbc::encode_program(&compiled.program).map_err(|error| (STATUS_COMPILE_ERROR, error))
+        let local_count = compiled.locals;
+        let program = compiled.program.with_local_count(local_count);
+        vmbc::encode_program(&program).map_err(|error| (STATUS_COMPILE_ERROR, error))
     });
 
     match result {
@@ -95,5 +97,22 @@ mod tests {
         assert_eq!(status, STATUS_INVALID_ARGUMENT);
         assert!(!output.is_null());
         pdvm_free_buffer(output, length);
+    }
+
+    #[test]
+    fn pinned_rust_runtime_matches_shared_callable_parity_fixture() {
+        let source = include_str!("../../../tests/fixtures/callable-parity.rss");
+        let compiled = vm::compile_source(source).expect("shared callable fixture should compile");
+        let mut runtime = vm::Vm::new(compiled.program.with_local_count(compiled.locals));
+
+        let status = runtime
+            .run()
+            .expect("shared callable fixture should execute");
+
+        assert_eq!(status, vm::VmStatus::Halted);
+        assert_eq!(
+            runtime.stack(),
+            &[vm::Value::Int(42), vm::Value::Int(15), vm::Value::Int(1)]
+        );
     }
 }
