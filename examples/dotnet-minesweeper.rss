@@ -725,13 +725,14 @@ fn on_board_down(event: map<string>) -> null {
 }
 fn on_board_up(event: map<string>) -> null {
     let mut game = &mut state;
+    let current_revealed = &revealed;
     let pointer_index = board_index_at(parse_positive_int(event.x.copy()), parse_positive_int(event.y.copy()), game.rows.copy(), game.columns.copy());
     let pointer_button: string = event.button.copy();
     if pointer_button == "Left" && pointer_index == game.pressed_index.copy() {
         let _cell_opened = open_cell(pointer_index);
     }
     if pointer_button == "Right" {
-        if pointer_index >= 0 && game.active.copy() && !game.paused.copy() && revealed[pointer_index].copy() == 0 {
+        if pointer_index >= 0 && game.active.copy() && !game.paused.copy() && current_revealed[pointer_index].copy() == 0 {
             if flagged[pointer_index].copy() == 0 {
                 flagged[pointer_index] = 1;
                 game.flag_count = game.flag_count.copy() + 1;
@@ -762,10 +763,13 @@ fn on_board_up(event: map<string>) -> null {
 }
 fn on_board_double_click(event: map<string>) -> null {
     let mut game = &mut state;
+    let current_revealed = &revealed;
+    let current_flagged = &flagged;
+    let current_display = &display;
     if event.button.copy() == "Left" {
         let chord_index = board_index_at(parse_positive_int(event.x.copy()), parse_positive_int(event.y.copy()), game.rows.copy(), game.columns.copy());
-        if chord_index >= 0 && game.active.copy() && !game.paused.copy() && revealed[chord_index].copy() == 1 {
-            let chord_number = display[chord_index].copy() - 2;
+        if chord_index >= 0 && game.active.copy() && !game.paused.copy() && current_revealed[chord_index].copy() == 1 {
+            let chord_number = current_display[chord_index].copy() - 2;
             if chord_number >= 0 && chord_number <= 8 {
                 let chord_row = chord_index / game.columns.copy();
                 let chord_column = chord_index % game.columns.copy();
@@ -782,10 +786,10 @@ fn on_board_double_click(event: map<string>) -> null {
                            neighbor_row >= 0 && neighbor_row < game.rows.copy() &&
                            neighbor_column >= 0 && neighbor_column < game.columns.copy() {
                             let neighbor = neighbor_row * game.columns.copy() + neighbor_column;
-                            if flagged[neighbor].copy() == 1 {
+                            if current_flagged[neighbor].copy() == 1 {
                                 adjacent_flags = adjacent_flags + 1;
                             }
-                            if revealed[neighbor].copy() == 0 && flagged[neighbor].copy() != 1 {
+                            if current_revealed[neighbor].copy() == 0 && current_flagged[neighbor].copy() != 1 {
                                 flash_cells[neighbor] = 1;
                                 flash_count = flash_count + 1;
                             }

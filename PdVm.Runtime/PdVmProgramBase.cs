@@ -366,6 +366,12 @@ public abstract class PdVmProgramBase : IPdVmCallableProgram
     protected PdVmValue LoadLocalValue(byte index)
     {
         var absolute = ResolveLocalIndex(index);
+        if (_mutableBorrowAliases.TryGetValue(absolute, out var aliasCell))
+        {
+            _lastBorrowedCapture = null;
+            return aliasCell.Value;
+        }
+
         if (_captureCells.TryGetValue(absolute, out var cell))
         {
             _lastBorrowedCapture = IsInsideScriptCallable() && _mutableBorrowCells.Contains(cell)

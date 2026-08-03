@@ -205,6 +205,40 @@ public sealed class PdVmTypedDotNetInteropTests
     }
 
     [Fact]
+    public async Task MutableBorrowAliasRefreshesAfterNestedCallable()
+    {
+        using var fixture = new SourceFixture(
+            "let mut state: map<int> = { value: 0 };\n" +
+            "fn update_state() -> null {\n" +
+            "    let mut current = &mut state;\n" +
+            "    current.value = current.value + 1;\n" +
+            "    null\n" +
+            "}\n" +
+            "pub fn read_after_update() -> int {\n" +
+            "    let mut current = &mut state;\n" +
+            "    update_state();\n" +
+            "    current.value\n" +
+            "}\n");
+        var output = PdVmDotNetSourceCompiler.CompileFile(fixture.SourcePath, fixture.OutputPath);
+        var program = Assert.IsAssignableFrom<IPdVmCallableProgram>(
+            PdVmAssemblyLoader.CreateProgram(Assembly.Load(File.ReadAllBytes(output))));
+        var host = PdVmDefaultHost.CreateConsoleHost();
+        _ = PdVmExecution.Run(program, host);
+
+        var first = await program.InvokeCallableAsync(
+            program.ResolveCallable("read_after_update"),
+            Array.Empty<PdVmValue>(),
+            host);
+        var second = await program.InvokeCallableAsync(
+            program.ResolveCallable("read_after_update"),
+            Array.Empty<PdVmValue>(),
+            host);
+
+        Assert.Equal(1, first.AsInt());
+        Assert.Equal(2, second.AsInt());
+    }
+
+    [Fact]
     public async Task CallbackAdapterSchemaIsValidatedBeforeScriptExecution()
     {
         using var fixture = new SourceFixture(
@@ -960,6 +994,9 @@ public sealed class PdVmTypedDotNetInteropTests
         Assert.Contains("Ui::BindMouseLeave(form, board_panel, on_board_leave)", source);
         Assert.Contains("Ui::BindClosing(form, release_game_resources)", source);
         Assert.Contains("Ui::BindTimer(form, 100, on_timer_tick)", source);
+        Assert.Contains("let current_revealed = &revealed", source);
+        Assert.Contains("let current_flagged = &flagged", source);
+        Assert.Contains("let current_display = &display", source);
         using var fixture = new SourceFixture(source);
 
         var output = PdVmDotNetSourceCompiler.CompileFile(
