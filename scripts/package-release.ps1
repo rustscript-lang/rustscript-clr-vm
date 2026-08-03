@@ -20,6 +20,11 @@ if (Test-Path -LiteralPath $packageRoot) {
 }
 New-Item -ItemType Directory -Path $packageRoot -Force | Out-Null
 
+$examplesSource = Join-Path $repoRoot 'examples'
+$examplesDestination = Join-Path $packageRoot 'examples'
+Copy-Item -LiteralPath $examplesSource -Destination $examplesDestination -Recurse
+Copy-Item -LiteralPath (Join-Path $repoRoot 'run-minesweeper.bat') -Destination $packageRoot
+
 $manifest = Join-Path $repoRoot 'native/pd-vm-compiler/Cargo.toml'
 cargo build --locked --release --target $RustTarget --manifest-path $manifest
 if ($LASTEXITCODE -ne 0) {
@@ -62,11 +67,21 @@ $requiredFiles = @(
     'PdVm.Compiler.pdb',
     'PdVm.Runtime.dll',
     'PdVm.Runtime.pdb',
-    $nativeName
+    $nativeName,
+    'run-minesweeper.bat'
 )
 foreach ($file in $requiredFiles) {
     if (-not (Test-Path -LiteralPath (Join-Path $packageRoot $file))) {
         throw "Release package is missing $file"
+    }
+}
+
+$examplesPrefix = $examplesSource.TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+foreach ($example in Get-ChildItem -LiteralPath $examplesSource -File -Recurse) {
+    $relative = $example.FullName.Substring($examplesPrefix.Length)
+    $packagedExample = Join-Path $examplesDestination $relative
+    if (-not (Test-Path -LiteralPath $packagedExample)) {
+        throw "Release package is missing example $relative"
     }
 }
 

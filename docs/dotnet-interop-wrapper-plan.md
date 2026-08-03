@@ -30,7 +30,7 @@ The wrapper materializes virtual modules in an overlay source root. The source r
 use System::Console;
 use System::IO::Path;
 
-Console::WriteLine("hello");
+Console::WriteLineString("hello");
 let name = Path::GetFileName("scripts/main.rss");
 ```
 
@@ -51,10 +51,10 @@ CLR objects use typed module functions rather than string-based instance dispatc
 ```rust
 use System::Text::StringBuilder;
 
-let builder = StringBuilder::New();
-StringBuilder::Append(builder, "hello");
+let builder = StringBuilder::NewStringBuilder();
+StringBuilder::AppendStringInstance(builder, "hello");
 let text = StringBuilder::ToString(builder);
-StringBuilder::Release(builder);
+StringBuilder::ReleaseStringBuilder(builder);
 ```
 
 The first version represents CLR references as checked integer handles. A later language-level opaque-handle schema can replace this without changing the binding descriptor format.

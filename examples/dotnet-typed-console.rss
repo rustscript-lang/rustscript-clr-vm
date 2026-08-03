@@ -2,12 +2,12 @@ use System::Console;
 use System::IO::Path;
 use System::Text::StringBuilder;
 
-Console::WriteLine("typed .NET interop from RustScript");
+Console::WriteLineString("typed .NET interop from RustScript");
 let name = Path::GetFileName("examples/demo.rss");
-Console::WriteLine(name);
+Console::WriteLineString(name);
 
-let builder = StringBuilder::New();
-StringBuilder::Append(builder, "CLR ");
-StringBuilder::Append(builder, "object handle");
-Console::WriteLine(StringBuilder::ToString(builder));
-StringBuilder::Release(builder);
+let builder = StringBuilder::NewStringBuilder();
+StringBuilder::AppendStringInstance(builder, "CLR ");
+StringBuilder::AppendStringInstance(builder, "object handle");
+Console::WriteLineString(StringBuilder::ToString(builder));
+StringBuilder::ReleaseStringBuilder(builder);

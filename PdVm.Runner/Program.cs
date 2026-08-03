@@ -5,10 +5,10 @@ using PdVm.Runtime;
 internal static class Program
 {
     [STAThread]
-    public static Task<int> Main(string[] args)
+    public static int Main(string[] args)
     {
         PdVmDotNetHost.InitializeWindowsFormsApplication();
-        return ProgramEntry.RunAsync(args);
+        return ProgramEntry.RunAsync(args).GetAwaiter().GetResult();
     }
 }
 
