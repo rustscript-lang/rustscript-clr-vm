@@ -149,6 +149,33 @@ public sealed class PdVmTypedDotNetInteropTests
     }
 
     [Fact]
+    public async Task ManagedCallbackCanCallAClosureKeptInRootLocals()
+    {
+        using var fixture = new SourceFixture(
+            "let mut calls: int = 0;\n" +
+            "fn inner() -> int { calls = calls + 1; calls }\n" +
+            "pub fn wrapper() -> int { inner() }\n");
+        var output = PdVmDotNetSourceCompiler.CompileFile(fixture.SourcePath, fixture.OutputPath);
+        var program = Assert.IsAssignableFrom<IPdVmCallableProgram>(
+            PdVmAssemblyLoader.CreateProgram(Assembly.Load(File.ReadAllBytes(output))));
+        var host = PdVmDefaultHost.CreateConsoleHost();
+        _ = PdVmExecution.Run(program, host);
+        var adapter = PdVmCallbackAdapters.Create<PdVmUnit, PdVmValue>(
+            _ => Array.Empty<PdVmValue>(),
+            value => value,
+            Array.Empty<PdVmValueType>(),
+            PdVmValueType.Int);
+        using var callback = program.CreateCallback(
+            "wrapper",
+            adapter,
+            host);
+
+        var result = await callback.InvokeAsync(PdVmUnit.Value);
+
+        Assert.Equal(1, result.AsInt());
+    }
+
+    [Fact]
     public async Task CallbackAdapterSchemaIsValidatedBeforeScriptExecution()
     {
         using var fixture = new SourceFixture(

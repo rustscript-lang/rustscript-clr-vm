@@ -713,12 +713,21 @@ public abstract class PdVmProgramBase : IPdVmCallableProgram
             throw new InvalidOperationException("callable parameter layout does not match its arity");
         }
 
+        // Managed callbacks start after the root frame has halted, so there is
+        // no active caller frame from which to inherit callable locals. The
+        // root locals remain the lexical environment for the program and may
+        // contain closure values referenced by the callback body (for example,
+        // an event wrapper calling another RSS function). Preserve those
+        // callable slots just as we do for a nested RSS call.
         var inheritedCallables = GetActiveFrameOrDefault() is { } caller
             ? _locals.Skip(caller.LocalBase).Take(caller.LocalCount)
                 .Select((value, slot) => (value, slot))
                 .Where(item => item.value.Kind == PdVmValueKind.Callable)
                 .ToArray()
-            : [];
+            : _locals.Take(_rootLocalCount)
+                .Select((value, slot) => (value, slot))
+                .Where(item => item.value.Kind == PdVmValueKind.Callable)
+                .ToArray();
         var localBase = _locals.Count;
         _locals.AddRange(Enumerable.Repeat(PdVmValue.Null(), prototype.FrameLocalCount));
         InitializeRootCallableBindings(localBase, prototype.FrameLocalCount);
