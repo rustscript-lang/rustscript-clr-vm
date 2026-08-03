@@ -423,14 +423,19 @@ let mut display = new_board_array(64);
 let mut flash_cells = new_board_array(64);
 
 fn render_board(render_rows: int, render_columns: int, render_paused: bool, render_flash_until: int, render_pressed_index: int) -> null {
+    // These arrays are resized when the difficulty changes. Borrow the root
+    // slots so this renderer observes the replacement arrays instead of the
+    // 8x8 values captured during startup.
+    let current_display = &display;
+    let current_flash_cells = &flash_cells;
     let mut render_styles = new_board_array(render_rows * render_columns);
     let mut render_index = 0;
     while render_index < render_rows * render_columns {
-        let mut render_style = display[render_index].copy();
+        let mut render_style = current_display[render_index].copy();
         if render_paused {
             render_style = 0;
         }
-        if render_flash_until > 0 && flash_cells[render_index].copy() == 1 {
+        if render_flash_until > 0 && current_flash_cells[render_index].copy() == 1 {
             render_style = 2;
         }
         if render_index == render_pressed_index && render_style == 0 {

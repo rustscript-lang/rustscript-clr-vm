@@ -7,6 +7,8 @@ public abstract class PdVmProgramBase : IPdVmCallableProgram
     private readonly List<PdVmValue> _stack = new();
     private readonly List<PdVmValue> _locals = new();
     private readonly Dictionary<int, PdVmCaptureCell> _captureCells = new();
+    private readonly Dictionary<int, PdVmCaptureCell> _mutableBorrowAliases = new();
+    private readonly HashSet<PdVmCaptureCell> _mutableBorrowCells = new(ReferenceEqualityComparer.Instance);
     private readonly List<PdVmExecutionFrame> _executionFrames = new();
     private readonly SemaphoreSlim _managedExecutionGate = new(1, 1);
     private readonly object _callbackQueueLock = new();
@@ -24,6 +26,7 @@ public abstract class PdVmProgramBase : IPdVmCallableProgram
     private bool _shutdown;
     private bool _callbackRunnerActive;
     private CancellationTokenSource _callbackRunnerCancellation = new();
+    private (PdVmValue Value, PdVmCaptureCell Cell)? _lastBorrowedCapture;
 
     private sealed record QueuedCallbackWork(
         object Generation,
@@ -363,13 +366,49 @@ public abstract class PdVmProgramBase : IPdVmCallableProgram
     protected PdVmValue LoadLocalValue(byte index)
     {
         var absolute = ResolveLocalIndex(index);
-        return _captureCells.TryGetValue(absolute, out var cell) ? cell.Value : _locals[absolute];
+        if (_captureCells.TryGetValue(absolute, out var cell))
+        {
+            _lastBorrowedCapture = IsInsideScriptCallable() && _mutableBorrowCells.Contains(cell)
+                ? (cell.Value, cell)
+                : null;
+            return cell.Value;
+        }
+
+        _lastBorrowedCapture = null;
+        return _locals[absolute];
     }
+
+    private bool IsInsideScriptCallable() =>
+        GetActiveFrameOrDefault() is { PrototypeId: not null };
 
     protected void StoreLocalValue(byte index, PdVmValue value)
     {
         ArgumentNullException.ThrowIfNull(value);
         var absolute = ResolveLocalIndex(index);
+        if (_mutableBorrowAliases.TryGetValue(absolute, out var aliasCell))
+        {
+            // The CLR compiler reuses the alias local as a temporary while
+            // lowering Set. Only the container returned by Set can publish a
+            // borrowed map/array update; staging scalars (usually null) must
+            // remain local temporaries.
+            if (value.Kind is not (PdVmValueKind.Map or PdVmValueKind.Array))
+            {
+                _locals[absolute] = value;
+                _lastBorrowedCapture = null;
+                return;
+            }
+
+            if (ReferencesCaptureCell(value, aliasCell, new HashSet<PdVmCaptureCell>(ReferenceEqualityComparer.Instance)))
+            {
+                throw new InvalidOperationException("callable capture ownership cycle is unsupported");
+            }
+
+            aliasCell.Value = value;
+            _locals[absolute] = value;
+            _lastBorrowedCapture = null;
+            return;
+        }
+
         if (_captureCells.TryGetValue(absolute, out var cell))
         {
             if (ReferencesCaptureCell(value, cell, new HashSet<PdVmCaptureCell>(ReferenceEqualityComparer.Instance)))
@@ -379,8 +418,15 @@ public abstract class PdVmProgramBase : IPdVmCallableProgram
 
             cell.Value = value;
         }
+        else if (_lastBorrowedCapture is { } borrowed &&
+                 ReferenceEquals(value, borrowed.Value))
+        {
+            _mutableBorrowAliases[absolute] = borrowed.Cell;
+            borrowed.Cell.Value = value;
+        }
 
         _locals[absolute] = value;
+        _lastBorrowedCapture = null;
     }
 
     protected PdVmValue[] GetLocalValues() => _locals.ToArray();
@@ -534,6 +580,12 @@ public abstract class PdVmProgramBase : IPdVmCallableProgram
             {
                 _captureCells.Remove(absolute);
             }
+            foreach (var absolute in _mutableBorrowAliases.Keys
+                         .Where(index => index >= frame.LocalBase && index < frameEnd)
+                         .ToArray())
+            {
+                _mutableBorrowAliases.Remove(absolute);
+            }
 
             if (frameEnd != _locals.Count)
             {
@@ -570,6 +622,9 @@ public abstract class PdVmProgramBase : IPdVmCallableProgram
         _stack.Clear();
         _locals.Clear();
         _captureCells.Clear();
+        _mutableBorrowAliases.Clear();
+        _mutableBorrowCells.Clear();
+        _lastBorrowedCapture = null;
         _executionFrames.Clear();
         _managedCallableResult = null;
         _mapIterators.Clear();
@@ -584,6 +639,9 @@ public abstract class PdVmProgramBase : IPdVmCallableProgram
         _stack.Clear();
         _locals.Clear();
         _captureCells.Clear();
+        _mutableBorrowAliases.Clear();
+        _mutableBorrowCells.Clear();
+        _lastBorrowedCapture = null;
         _executionFrames.Clear();
         _managedCallableResult = null;
         _mapIterators.Clear();
@@ -760,6 +818,10 @@ public abstract class PdVmProgramBase : IPdVmCallableProgram
                 if (prototype.SelfSlot != slot)
                 {
                     _captureCells[absolute] = cell;
+                    if (prototype.CaptureModes[index] == PdVmRuntimeCaptureBindingMode.BorrowMut)
+                    {
+                        _mutableBorrowCells.Add(cell);
+                    }
                 }
             }
         }
@@ -841,6 +903,11 @@ public abstract class PdVmProgramBase : IPdVmCallableProgram
                     _captureCells[absolute] = shared;
                 }
 
+                if (mode == PdVmRuntimeCaptureBindingMode.BorrowMut)
+                {
+                    _mutableBorrowCells.Add(shared);
+                }
+
                 _locals[absolute] = shared.Value;
                 cells[index] = shared;
             }
@@ -866,6 +933,7 @@ public abstract class PdVmProgramBase : IPdVmCallableProgram
 
         var absolute = ResolveLocalIndex((byte)slot);
         _captureCells.Remove(absolute);
+        _mutableBorrowAliases.Remove(absolute);
         _locals[absolute] = PdVmValue.Null();
         return PdVmCallOutcome.Returned(PdVmCallReturn.None);
     }
@@ -1494,6 +1562,11 @@ public abstract class PdVmProgramBase : IPdVmCallableProgram
         {
             _captureCells.Remove(absolute);
         }
+        foreach (var absolute in _mutableBorrowAliases.Keys.Where(index => index >= localBase).ToArray())
+        {
+            _mutableBorrowAliases.Remove(absolute);
+        }
+        _lastBorrowedCapture = null;
 
         if (_locals.Count > localBase)
         {

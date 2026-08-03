@@ -176,6 +176,35 @@ public sealed class PdVmTypedDotNetInteropTests
     }
 
     [Fact]
+    public async Task MutableBorrowAliasPublishesContainerUpdates()
+    {
+        using var fixture = new SourceFixture(
+            "let mut state: map<int> = { value: 0 };\n" +
+            "pub fn increment() -> int {\n" +
+            "    let mut current = &mut state;\n" +
+            "    current.value = current.value + 1;\n" +
+            "    state.value\n" +
+            "}\n");
+        var output = PdVmDotNetSourceCompiler.CompileFile(fixture.SourcePath, fixture.OutputPath);
+        var program = Assert.IsAssignableFrom<IPdVmCallableProgram>(
+            PdVmAssemblyLoader.CreateProgram(Assembly.Load(File.ReadAllBytes(output))));
+        var host = PdVmDefaultHost.CreateConsoleHost();
+        _ = PdVmExecution.Run(program, host);
+
+        var first = await program.InvokeCallableAsync(
+            program.ResolveCallable("increment"),
+            Array.Empty<PdVmValue>(),
+            host);
+        var second = await program.InvokeCallableAsync(
+            program.ResolveCallable("increment"),
+            Array.Empty<PdVmValue>(),
+            host);
+
+        Assert.Equal(1, first.AsInt());
+        Assert.Equal(2, second.AsInt());
+    }
+
+    [Fact]
     public async Task CallbackAdapterSchemaIsValidatedBeforeScriptExecution()
     {
         using var fixture = new SourceFixture(
